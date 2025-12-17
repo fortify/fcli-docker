@@ -112,12 +112,24 @@ A new repository secret needs to be created in the `fortify/fcli` repository:
 - **Secret Value:** A GitHub Personal Access Token (PAT) with `workflow` scope
 - **Purpose:** Allows the fcli repository to trigger workflows in the fcli-docker repository
 
-**To create the PAT:**
+**To create the PAT (Fine-grained token recommended):**
 1. Go to GitHub Settings → Developer settings → Personal access tokens → Fine-grained tokens
 2. Create new token with:
-   - Repository access: Only select repositories → `fortify/fcli-docker`
-   - Permissions: Actions (Read and write)
-3. Copy the token and add it as a secret in `fortify/fcli` repository settings
+   - Token name: `fcli-docker-trigger`
+   - Expiration: Choose appropriate expiration (e.g., 1 year, then rotate)
+   - Repository access: **Only select repositories** → `fortify/fcli-docker`
+   - Repository permissions:
+     - Actions: **Read and write** (required to trigger workflows)
+     - Metadata: **Read** (automatically included)
+3. Generate token and copy it immediately
+4. Add it as a secret in the `fortify/fcli` repository settings:
+   - Go to fortify/fcli repository → Settings → Secrets and variables → Actions
+   - Click "New repository secret"
+   - Name: `FCLI_DOCKER_TRIGGER_TOKEN`
+   - Value: Paste the token
+   - Click "Add secret"
+
+**Note:** Use fine-grained tokens instead of classic PATs for better security and minimal permissions.
 
 ### Alternative: Manual Trigger
 

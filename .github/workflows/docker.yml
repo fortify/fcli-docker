@@ -124,7 +124,7 @@ jobs:
           
           # Check Linux base images (Docker Hub)
           check_dockerhub_image "library/alpine" "${{ inputs.alpineBase }}" "^3\.[0-9]+\.[0-9]+$" "Alpine"
-          check_dockerhub_image "redhat/ubi9" "${{ inputs.ubiBase }}" "^9\.[0-9]+$" "Red Hat UBI9"
+          check_dockerhub_image "redhat/ubi9" "${{ inputs.ubiBase }}" "^9\.[0-9]+(\.[0-9]+)?$" "Red Hat UBI9"
           
           # Check Windows base image (MCR)
           echo ""
