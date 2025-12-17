@@ -19,7 +19,7 @@
 # ============================================================================
 # Global build arguments (must be before any FROM to use in FROM statements)
 # ============================================================================
-ARG SERVERCORE_BASE=mcr.microsoft.com/windows/servercore:ltsc2022
+ARG SERVERCORE_BASE=mcr.microsoft.com/windows/servercore:ltsc2025
 
 # ============================================================================
 # Stage: fcli-downloader

@@ -22,10 +22,10 @@ on:
         type: string
         default: 'redhat/ubi9:9.7'
       servercoreBase:
-        description: 'Windows Server Core base image (default: mcr.microsoft.com/windows/servercore:ltsc2022)'
+        description: 'Windows Server Core base image (default: mcr.microsoft.com/windows/servercore:ltsc2025)'
         required: false
         type: string
-        default: 'mcr.microsoft.com/windows/servercore:ltsc2022'
+        default: 'mcr.microsoft.com/windows/servercore:ltsc2025'
       updateBaseImages:
         description: 'Update base images for already-released fcli version (advanced: republish with new base images)'
         required: false
@@ -54,8 +54,8 @@ jobs:
             current: ${{ inputs.ubiBase }}
             pattern: '^9\.[0-9]+(\.[0-9]+)?$'
           - name: Windows Server Core
-            registry: dockerhub
-            repo: microsoft/windows-servercore
+            registry: mcr
+            repo: windows/servercore
             current: ${{ inputs.servercoreBase }}
             pattern: '^ltsc[0-9]+$'
       fail-fast: false
@@ -73,6 +73,24 @@ jobs:
             # Get tags from Docker Hub API
             LATEST=$(curl -fsSL "https://registry.hub.docker.com/v2/repositories/${REPO}/tags?page_size=100" 2>/dev/null | \
               jq -r '.results[].name' 2>/dev/null | grep -E "$PATTERN" | sort -V | tail -1)
+            
+            if [[ -z "$LATEST" ]]; then
+              echo "::notice::Could not determine latest ${{ matrix.name }} version"
+              echo "Current: $CURRENT"
+            else
+              CURRENT_TAG="${CURRENT##*:}"
+              if [[ "$LATEST" != "$CURRENT_TAG" ]]; then
+                echo "::warning::Newer ${{ matrix.name }} version available: $LATEST (current: $CURRENT_TAG)"
+              else
+                echo "✓ ${{ matrix.name }} is up to date: $CURRENT"
+              fi
+            fi
+          elif [[ "${{ matrix.registry }}" == "mcr" ]]; then
+            REPO="${{ matrix.repo }}"
+            
+            # MCR API allows anonymous access to tags list
+            LATEST=$(curl -fsSL "https://mcr.microsoft.com/v2/${REPO}/tags/list" 2>/dev/null | \
+              jq -r '.tags[]?' 2>/dev/null | grep -E "$PATTERN" | sort -V | tail -1)
             
             if [[ -z "$LATEST" ]]; then
               echo "::notice::Could not determine latest ${{ matrix.name }} version"
