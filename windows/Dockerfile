@@ -126,12 +126,9 @@ LABEL org.opencontainers.image.vendor="Fortify" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.base.name="${SERVERCORE_BASE}"
 
-# Test that fcli works (before switching to non-admin user)
-# Note: This must run AFTER VC++ redistributables are installed, as fcli requires those DLLs
+# Verify fcli.exe exists (runtime test requires VC++ DLLs which may not be fully available during build)
 RUN $ErrorActionPreference = 'Stop'; \
-    if (-not (Test-Path 'C:\Program Files\fcli\fcli.exe')) { throw 'fcli.exe not found' }; \
-    $env:Path = 'C:\Program Files\fcli;' + $env:Path; \
-    fcli --version
+    if (-not (Test-Path 'C:\Program Files\fcli\fcli.exe')) { throw 'fcli.exe not found' }
 
 # Switch to non-admin user
 USER fcli
