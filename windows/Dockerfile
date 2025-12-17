@@ -90,8 +90,8 @@ ARG SERVERCORE_BASE
 SHELL ["powershell", "-Command"]
 
 # Copy fcli and VC++ redistributable from download stage
-COPY --from=fcli-downloader C:/temp/fcli.exe "C:/Program Files/fcli/fcli.exe"
-COPY --from=fcli-downloader C:/temp/vc_redist.x64.exe C:/vc_redist.x64.exe
+COPY --from=fcli-downloader ["C:/temp/fcli.exe", "C:/Program Files/fcli/fcli.exe"]
+COPY --from=fcli-downloader ["C:/temp/vc_redist.x64.exe", "C:/vc_redist.x64.exe"]
 
 # Install VC++ redistributables and clean up
 RUN $ErrorActionPreference = 'Stop'; \
