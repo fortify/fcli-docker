@@ -89,6 +89,10 @@ ARG SERVERCORE_BASE
 # Use PowerShell for RUN commands in this stage too
 SHELL ["powershell", "-Command"]
 
+# Create fcli directory first
+RUN $ErrorActionPreference = 'Stop'; \
+    New-Item -ItemType Directory -Path 'C:\Program Files\fcli' -Force | Out-Null
+
 # Copy fcli and VC++ redistributable from download stage
 COPY --from=fcli-downloader ["C:/temp/fcli.exe", "C:/Program Files/fcli/fcli.exe"]
 COPY --from=fcli-downloader ["C:/temp/vc_redist.x64.exe", "C:/vc_redist.x64.exe"]
@@ -123,8 +127,11 @@ LABEL org.opencontainers.image.vendor="Fortify" \
       org.opencontainers.image.base.name="${SERVERCORE_BASE}"
 
 # Test that fcli works (before switching to non-admin user)
+# Note: This must run AFTER VC++ redistributables are installed, as fcli requires those DLLs
 RUN $ErrorActionPreference = 'Stop'; \
-    & "C:\Program Files\fcli\fcli.exe" --version
+    if (-not (Test-Path 'C:\Program Files\fcli\fcli.exe')) { throw 'fcli.exe not found' }; \
+    $env:Path = 'C:\Program Files\fcli;' + $env:Path; \
+    fcli --version
 
 # Switch to non-admin user
 USER fcli
