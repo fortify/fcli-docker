@@ -37,6 +37,56 @@ permissions:
   packages: write
   
 jobs:
+  check-base-images:
+    name: Check Base Images
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: Alpine
+            registry: dockerhub
+            repo: library/alpine
+            current: ${{ inputs.alpineBase }}
+            pattern: '^3\.[0-9]+\.[0-9]+$'
+          - name: Red Hat UBI9
+            registry: dockerhub
+            repo: redhat/ubi9
+            current: ${{ inputs.ubiBase }}
+            pattern: '^9\.[0-9]+(\.[0-9]+)?$'
+          - name: Windows Server Core
+            registry: dockerhub
+            repo: microsoft/windows-servercore
+            current: ${{ inputs.servercoreBase }}
+            pattern: '^ltsc[0-9]+$'
+      fail-fast: false
+    steps:
+      - name: Check ${{ matrix.name }}
+        continue-on-error: true
+        run: |
+          echo "Checking ${{ matrix.name }}..."
+          CURRENT="${{ matrix.current }}"
+          PATTERN="${{ matrix.pattern }}"
+          
+          if [[ "${{ matrix.registry }}" == "dockerhub" ]]; then
+            REPO="${{ matrix.repo }}"
+            
+            # Get tags from Docker Hub API
+            LATEST=$(curl -fsSL "https://registry.hub.docker.com/v2/repositories/${REPO}/tags?page_size=100" 2>/dev/null | \
+              jq -r '.results[].name' 2>/dev/null | grep -E "$PATTERN" | sort -V | tail -1)
+            
+            if [[ -z "$LATEST" ]]; then
+              echo "::notice::Could not determine latest ${{ matrix.name }} version"
+              echo "Current: $CURRENT"
+            else
+              CURRENT_TAG="${CURRENT##*:}"
+              if [[ "$LATEST" != "$CURRENT_TAG" ]]; then
+                echo "::warning::Newer ${{ matrix.name }} version available: $LATEST (current: $CURRENT_TAG)"
+              else
+                echo "✓ ${{ matrix.name }} is up to date: $CURRENT"
+              fi
+            fi
+          fi
+
   docker-linux:
     name: Build & Publish Linux Images
     runs-on: ubuntu-latest
@@ -61,75 +111,6 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
-      
-      - name: Check for newer base images
-        continue-on-error: true
-        run: |
-          echo "Checking for newer base image versions..."
-          
-          check_dockerhub_image() {
-            local repo=$1
-            local current=$2
-            local pattern=$3
-            local name=$4
-            
-            echo "Checking $name..."
-            local latest=$(curl -fsSL "https://registry.hub.docker.com/v2/repositories/$repo/tags?page_size=100" | \
-              jq -r '.results[].name' | grep -E "$pattern" | sort -V | tail -1)
-            
-            if [[ -z "$latest" ]]; then
-              echo "::warning::Failed to check $name updates"
-              return
-            fi
-            
-            local current_tag="${current##*:}"
-            if [[ "$latest" != "$current_tag" ]]; then
-              echo "::warning::Newer $name version available: ${repo##*/}:$latest (current: $current)"
-            else
-              echo "✓ $name is up to date: $current"
-            fi
-          }
-          
-          check_mcr_image() {
-            local image=$1
-            local current=$2
-            local pattern=$3
-            local name=$4
-            
-            echo "Checking $name..."
-            
-            # Try to get auth token from MCR (v2 token endpoint)
-            local token=$(curl -fsSL "https://mcr.microsoft.com/v2/token?scope=repository:${image}:pull" 2>/dev/null | jq -r '.token' 2>/dev/null)
-            
-            if [[ -z "$token" || "$token" == "null" ]]; then
-              # Try alternative: check via Docker Hub manifest (MCR mirrors to Docker Hub)
-              echo "::notice::MCR API check unavailable for $name, skipping version check"
-              echo "Current version: $current"
-              return
-            fi
-            
-            # Get tags list
-            local latest=$(curl -fsSL -H "Authorization: Bearer $token" \
-              "https://mcr.microsoft.com/v2/${image}/tags/list" 2>/dev/null | \
-              jq -r '.tags[]?' 2>/dev/null | grep -E "$pattern" | sort -V | tail -1)
-            
-            if [[ -z "$latest" ]]; then
-              echo "::notice::Could not determine latest $name version (current: $current)"
-              return
-            fi
-            
-            local current_tag="${current##*:}"
-            if [[ "$latest" != "$current_tag" ]]; then
-              echo "::warning::Newer $name version available: $latest (current: $current)"
-            else
-              echo "✓ $name is up to date: $current"
-            fi
-          }
-          
-          # Check Linux base images (Docker Hub)
-          check_dockerhub_image "library/alpine" "${{ inputs.alpineBase }}" "^3\.[0-9]+\.[0-9]+$" "Alpine"
-          check_dockerhub_image "redhat/ubi9" "${{ inputs.ubiBase }}" "^9\.[0-9]+(\.[0-9]+)?$" "Red Hat UBI9"
-
       
       - name: Extract metadata
         id: meta
@@ -293,50 +274,6 @@ jobs:
     steps:
       - name: Check-out source code
         uses: actions/checkout@v4
-      
-      - name: Check for newer base images
-        continue-on-error: true
-        shell: pwsh
-        run: |
-          Write-Host "Checking for newer base image versions..."
-          Write-Host ""
-          
-          # Check Windows Server Core base image via MCR
-          Write-Host "Checking Windows Server Core..."
-          $image = "windows/servercore"
-          $current = "${{ inputs.servercoreBase }}"
-          $pattern = "^ltsc[0-9]+$"
-          
-          try {
-            # Get auth token from MCR
-            $tokenResponse = Invoke-RestMethod -Uri "https://mcr.microsoft.com/v2/token?scope=repository:${image}:pull" -ErrorAction SilentlyContinue
-            $token = $tokenResponse.token
-            
-            if ($token) {
-              # Get tags list
-              $headers = @{ Authorization = "Bearer $token" }
-              $tagsResponse = Invoke-RestMethod -Uri "https://mcr.microsoft.com/v2/${image}/tags/list" -Headers $headers -ErrorAction SilentlyContinue
-              $latest = $tagsResponse.tags | Where-Object { $_ -match $pattern } | Sort-Object | Select-Object -Last 1
-              
-              if ($latest) {
-                $currentTag = $current -replace '.*:', ''
-                if ($latest -ne $currentTag) {
-                  Write-Host "::warning::Newer Windows Server Core version available: $latest (current: $current)"
-                } else {
-                  Write-Host "✓ Windows Server Core is up to date: $current"
-                }
-              } else {
-                Write-Host "::notice::Could not determine latest Windows Server Core version (current: $current)"
-              }
-            } else {
-              Write-Host "::notice::MCR API check unavailable for Windows Server Core, skipping version check"
-              Write-Host "Current version: $current"
-            }
-          } catch {
-            Write-Host "::notice::Could not check Windows Server Core version (current: $current)"
-          }
-          
-          Write-Host ""
       
       - name: Build Windows image
         shell: pwsh
