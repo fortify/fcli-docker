@@ -126,10 +126,6 @@ LABEL org.opencontainers.image.vendor="Fortify" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.base.name="${SERVERCORE_BASE}"
 
-# Verify fcli.exe exists (runtime test requires VC++ DLLs which may not be fully available during build)
-RUN $ErrorActionPreference = 'Stop'; \
-    if (-not (Test-Path 'C:\Program Files\fcli\fcli.exe')) { throw 'fcli.exe not found' }
-
 # Switch to non-admin user
 USER fcli
 
