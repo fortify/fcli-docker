@@ -90,7 +90,7 @@ ARG SERVERCORE_BASE
 SHELL ["powershell", "-Command"]
 
 # Copy fcli and VC++ redistributable from download stage
-COPY --from=fcli-downloader C:/temp/fcli.exe C:/Program Files/fcli/fcli.exe
+COPY --from=fcli-downloader C:/temp/fcli.exe "C:/Program Files/fcli/fcli.exe"
 COPY --from=fcli-downloader C:/temp/vc_redist.x64.exe C:/vc_redist.x64.exe
 
 # Install VC++ redistributables and clean up
@@ -103,8 +103,8 @@ RUN $ErrorActionPreference = 'Stop'; \
 RUN $ErrorActionPreference = 'Stop'; \
     New-Item -ItemType Directory -Path C:\data -Force | Out-Null; \
     net user fcli /add; \
-    icacls 'C:\Program Files\fcli' /grant fcli:RX; \
-    icacls C:\data /grant fcli:F
+    icacls 'C:\Program Files\fcli' /grant 'fcli:(RX)'; \
+    icacls C:\data /grant 'fcli:(F)'
 
 # Configure environment and PATH
 WORKDIR C:/data
@@ -124,7 +124,7 @@ LABEL org.opencontainers.image.vendor="Fortify" \
 
 # Test that fcli works (before switching to non-admin user)
 RUN $ErrorActionPreference = 'Stop'; \
-    & 'C:\Program Files\fcli\fcli.exe' --version
+    & "C:\Program Files\fcli\fcli.exe" --version
 
 # Switch to non-admin user
 USER fcli
