@@ -174,15 +174,15 @@ jobs:
         run: |
           VARIANTS='[]'
           
-          # Add production variants if enabled
+          # Add production variants if enabled (use -c for compact output)
           if [[ "${{ inputs.buildProduction }}" == "true" ]]; then
-            VARIANTS=$(echo "$VARIANTS" | jq '. + [{"name":"scratch","target":"fcli-scratch","suffix":"","latest_suffix":"","base_image":"scratch (statically linked binary)","publish":true}]')
-            VARIANTS=$(echo "$VARIANTS" | jq --arg base "${{ inputs.ubiBase }}" '. + [{"name":"ubi9","target":"fcli-ubi9","suffix":"-ubi9","latest_suffix":"-ubi9","base_image":$base,"publish":true}]')
+            VARIANTS=$(echo "$VARIANTS" | jq -c '. + [{"name":"scratch","target":"fcli-scratch","suffix":"","latest_suffix":"","base_image":"scratch (statically linked binary)","publish":true}]')
+            VARIANTS=$(echo "$VARIANTS" | jq -c --arg base "${{ inputs.ubiBase }}" '. + [{"name":"ubi9","target":"fcli-ubi9","suffix":"-ubi9","latest_suffix":"-ubi9","base_image":$base,"publish":true}]')
           fi
           
           # Add test variants if enabled
           if [[ "${{ inputs.buildTest }}" == "true" ]]; then
-            VARIANTS=$(echo "$VARIANTS" | jq --arg base "${{ inputs.alpineBase }}" '. + [{"name":"alpine","target":"fcli-alpine","suffix":"-alpine","latest_suffix":"-alpine","base_image":$base,"publish":false}]')
+            VARIANTS=$(echo "$VARIANTS" | jq -c --arg base "${{ inputs.alpineBase }}" '. + [{"name":"alpine","target":"fcli-alpine","suffix":"-alpine","latest_suffix":"-alpine","base_image":$base,"publish":false}]')
           fi
           
           # Check if we have any variants to build
