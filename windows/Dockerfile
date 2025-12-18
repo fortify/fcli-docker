@@ -93,9 +93,11 @@ SHELL ["powershell", "-Command"]
 RUN $ErrorActionPreference = 'Stop'; \
     New-Item -ItemType Directory -Path 'C:\Program Files\fcli' -Force | Out-Null
 
-# Copy fcli and VC++ redistributable from download stage
+# Copy fcli, entrypoint, welcome, and VC++ redistributable from download stage
 COPY --from=fcli-downloader ["C:/temp/fcli.exe", "C:/Program Files/fcli/fcli.exe"]
 COPY --from=fcli-downloader ["C:/temp/vc_redist.x64.exe", "C:/vc_redist.x64.exe"]
+COPY ["docker-entrypoint.cmd", "C:/Program Files/fcli/docker-entrypoint.cmd"]
+COPY ["welcome.txt", "C:/Program Files/fcli/welcome.txt"]
 
 # Install VC++ redistributables and clean up
 RUN $ErrorActionPreference = 'Stop'; \
@@ -129,7 +131,8 @@ LABEL org.opencontainers.image.vendor="Fortify" \
 # Switch to non-admin user
 USER fcli
 
-# Default to PowerShell for full scripting capability
+# Set entrypoint and default to PowerShell for full scripting capability
+ENTRYPOINT ["C:\\Program Files\\fcli\\docker-entrypoint.cmd"]
 CMD ["powershell.exe"]
 
 # ============================================================================
@@ -149,9 +152,11 @@ SHELL ["powershell", "-Command"]
 RUN $ErrorActionPreference = 'Stop'; \
     New-Item -ItemType Directory -Path 'C:\Program Files\fcli' -Force | Out-Null
 
-# Copy fcli and VC++ redistributable from download stage
+# Copy fcli, entrypoint, welcome, and VC++ redistributable from download stage
 COPY --from=fcli-downloader ["C:/temp/fcli.exe", "C:/Program Files/fcli/fcli.exe"]
 COPY --from=fcli-downloader ["C:/temp/vc_redist.x64.exe", "C:/vc_redist.x64.exe"]
+COPY ["docker-entrypoint.cmd", "C:/Program Files/fcli/docker-entrypoint.cmd"]
+COPY ["welcome.txt", "C:/Program Files/fcli/welcome.txt"]
 
 # Install VC++ redistributables and clean up
 RUN $ErrorActionPreference = 'Stop'; \
@@ -185,5 +190,6 @@ LABEL org.opencontainers.image.vendor="Fortify" \
 # Switch to non-admin user
 USER fcli
 
-# Default to PowerShell for full scripting capability
+# Set entrypoint and default to PowerShell for full scripting capability
+ENTRYPOINT ["C:\\Program Files\\fcli\\docker-entrypoint.cmd"]
 CMD ["powershell.exe"]

@@ -1,0 +1,26 @@
+================================================================================
+                         Fortify CLI (fcli) Container
+================================================================================
+
+This container provides the Fortify Command Line Interface (fcli) for
+interacting with Fortify products (FoD, SSC, ScanCentral SAST/DAST).
+
+Quick Start:
+  fcli --help                Show fcli help
+  fcli --version             Show fcli version
+  fcli <product> --help      Show product-specific commands
+                             (products: fod, ssc, sc-sast, sc-dast, tool)
+
+Examples:
+  fcli fod session login --url https://... --client-id ... --client-secret ...
+  fcli ssc session login --url https://... --user ... --password ...
+  fcli scan start ...
+
+Documentation: https://fortify.github.io/fcli/
+GitHub:        https://github.com/fortify/fcli
+
+Note: fcli stores session state and cache in C:\data (FCLI_USER_HOME).
+      For persistent state across image invocations, mount a volume: 
+        docker run -v fcli-data:C:\data ...
+
+================================================================================
