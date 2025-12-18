@@ -10,7 +10,7 @@
 #
 # Build Arguments:
 # - FCLI_VERSION: fcli version to download (required, e.g., "v3.14.0")
-# - SERVERCORE_BASE: Windows Server Core base image (default: mcr.microsoft.com/windows/servercore:ltsc2022)
+# - SERVERCORE_BASE: Windows Server Core base image (default: mcr.microsoft.com/windows/servercore:ltsc2025)
 # 
 # The Dockerfile uses a two-stage build:
 # 1. Download stage: Downloads fcli, verifies signature, and downloads VC++ redistributables
@@ -19,7 +19,7 @@
 # ============================================================================
 # Global build arguments (must be before any FROM to use in FROM statements)
 # ============================================================================
-ARG SERVERCORE_BASE=mcr.microsoft.com/windows/servercore:ltsc2025
+ARG SERVERCORE_BASE=mcr.microsoft.com/windows/servercore:ltsc2022
 
 # ============================================================================
 # Stage: fcli-downloader
@@ -125,6 +125,62 @@ LABEL org.opencontainers.image.vendor="Fortify" \
       org.opencontainers.image.documentation="https://fortify.github.io/fcli/" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.base.name="${SERVERCORE_BASE}"
+
+# Switch to non-admin user
+USER fcli
+
+# Default to PowerShell for full scripting capability
+CMD ["powershell.exe"]
+
+# ============================================================================
+# Stage: fcli-ltsc2025
+# Final Server Core image with fcli and VC++ redistributables (ltsc2025)
+# Uses Server Core (not Nano) to provide full PowerShell and tool installation capability
+# ============================================================================
+FROM mcr.microsoft.com/windows/servercore:ltsc2025 AS fcli-ltsc2025
+
+# Bring build args into this stage
+ARG FCLI_VERSION
+
+# Use PowerShell for RUN commands in this stage too
+SHELL ["powershell", "-Command"]
+
+# Create fcli directory first
+RUN $ErrorActionPreference = 'Stop'; \
+    New-Item -ItemType Directory -Path 'C:\Program Files\fcli' -Force | Out-Null
+
+# Copy fcli and VC++ redistributable from download stage
+COPY --from=fcli-downloader ["C:/temp/fcli.exe", "C:/Program Files/fcli/fcli.exe"]
+COPY --from=fcli-downloader ["C:/temp/vc_redist.x64.exe", "C:/vc_redist.x64.exe"]
+
+# Install VC++ redistributables and clean up
+RUN $ErrorActionPreference = 'Stop'; \
+    Write-Host 'Installing Visual C++ Redistributable...'; \
+    Start-Process -FilePath C:\vc_redist.x64.exe -ArgumentList '/install', '/quiet', '/norestart' -Wait; \
+    Remove-Item C:\vc_redist.x64.exe -Force
+
+# Create data directory and non-admin user for security (matching Linux approach)
+RUN $ErrorActionPreference = 'Stop'; \
+    New-Item -ItemType Directory -Path C:\data -Force | Out-Null; \
+    net user fcli /add; \
+    icacls 'C:\Program Files\fcli' /grant 'fcli:(RX)'; \
+    icacls C:\data /grant 'fcli:(F)'
+
+# Configure environment and PATH
+WORKDIR C:/data
+ENV FCLI_USER_HOME=C:/data
+ENV PATH="C:\Program Files\fcli;${PATH}"
+
+# OCI standard labels (multi-line for optimization)
+LABEL org.opencontainers.image.vendor="Fortify" \
+      org.opencontainers.image.title="fcli Windows (ltsc2025)" \
+      org.opencontainers.image.description="Fortify CLI on Windows Server Core ltsc2025" \
+      org.opencontainers.image.version="${FCLI_VERSION}" \
+      org.opencontainers.image.url="https://github.com/fortify/fcli" \
+      org.opencontainers.image.source="https://github.com/fortify/fcli" \
+      org.opencontainers.image.documentation="https://fortify.github.io/fcli/" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.base.name="mcr.microsoft.com/windows/servercore:ltsc2025"
 
 # Switch to non-admin user
 USER fcli

@@ -21,11 +21,11 @@ on:
         required: false
         type: string
         default: 'redhat/ubi9:9.7'
-      servercoreBase:
-        description: 'Windows Server Core base image (default: mcr.microsoft.com/windows/servercore:ltsc2025)'
+      servercoreVersions:
+        description: 'Windows Server Core ltsc versions to build (comma-separated, default: ltsc2022)'
         required: false
         type: string
-        default: 'mcr.microsoft.com/windows/servercore:ltsc2025'
+        default: 'ltsc2022,ltsc2025'
       isLatest:
         description: 'Tag as latest (set by fcli CI when releasing latest version for current major version)'
         required: false
@@ -56,7 +56,7 @@ jobs:
           - name: Windows Server Core
             registry: mcr
             repo: windows/servercore
-            current: ${{ inputs.servercoreBase }}
+            current_versions: ${{ inputs.servercoreVersions }}
             pattern: '^ltsc[0-9]+$'
       fail-fast: false
     steps:
@@ -87,6 +87,7 @@ jobs:
             fi
           elif [[ "${{ matrix.registry }}" == "mcr" ]]; then
             REPO="${{ matrix.repo }}"
+            CURRENT_VERSIONS="${{ matrix.current_versions }}"
             
             # MCR API allows anonymous access to tags list
             LATEST=$(curl -fsSL "https://mcr.microsoft.com/v2/${REPO}/tags/list" 2>/dev/null | \
@@ -94,14 +95,18 @@ jobs:
             
             if [[ -z "$LATEST" ]]; then
               echo "::notice::Could not determine latest ${{ matrix.name }} version"
-              echo "Current: $CURRENT"
+              echo "Current versions in matrix: $CURRENT_VERSIONS"
             else
-              CURRENT_TAG="${CURRENT##*:}"
-              if [[ "$LATEST" != "$CURRENT_TAG" ]]; then
-                echo "::warning::Newer ${{ matrix.name }} version available: $LATEST (current: $CURRENT_TAG)"
+              # Find the latest version in the matrix
+              IFS=',' read -ra VERSIONS <<< "$CURRENT_VERSIONS"
+              MATRIX_LATEST=$(printf '%s\n' "${VERSIONS[@]}" | sort -V | tail -1)
+              
+              if [[ "$LATEST" != "$MATRIX_LATEST" ]]; then
+                echo "::warning::Newer ${{ matrix.name }} version available: $LATEST (latest in matrix: $MATRIX_LATEST)"
               else
-                echo "✓ ${{ matrix.name }} is up to date: $CURRENT"
+                echo "✓ ${{ matrix.name }} is up to date: $MATRIX_LATEST"
               fi
+              echo "Matrix includes: $CURRENT_VERSIONS"
             fi
           fi
 
@@ -308,47 +313,78 @@ jobs:
           
           echo "" >> $GITHUB_STEP_SUMMARY
   
+  generate-windows-matrix:
+    name: Generate Windows Matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - name: Generate matrix from servercoreVersions input
+        id: matrix
+        run: |
+          VERSIONS="${{ inputs.servercoreVersions }}"
+          
+          # Convert comma-separated string to JSON array
+          # e.g., "ltsc2022,ltsc2025" -> ["ltsc2022","ltsc2025"]
+          JSON_ARRAY=$(echo "$VERSIONS" | jq -R 'split(",") | map(gsub("^\\s+|\\s+$";""))')
+          
+          echo "matrix={\"ltsc\":$JSON_ARRAY}" >> $GITHUB_OUTPUT
+          echo "Generated Windows matrix: $JSON_ARRAY"
+  
   # Windows images: build only for testing, do not publish
   docker-windows:
     name: Build Windows Images (Test Only)
-    needs: generate-metadata
-    runs-on: windows-2022
+    needs: [generate-metadata, generate-windows-matrix]
+    runs-on: windows-${{ matrix.ltsc }}
+    strategy:
+      matrix: ${{ fromJson(needs.generate-windows-matrix.outputs.matrix) }}
+      fail-fast: false
     env:
       DOCKER_SRC: windows
     steps:
       - name: Check-out source code
         uses: actions/checkout@v4
       
-      - name: Build Windows image
+      - name: Build Windows image for ${{ matrix.ltsc }}
         shell: pwsh
         run: |
           cd $env:DOCKER_SRC
           
-          docker build . `
-            --target fcli-ltsc2022 `
-            -t fcli-windows:test `
-            --build-arg FCLI_VERSION=${{ inputs.releaseTag }} `
-            --build-arg SERVERCORE_BASE=${{ inputs.servercoreBase }}
+          $ltscVersion = "${{ matrix.ltsc }}"
+          $baseImage = "mcr.microsoft.com/windows/servercore:$ltscVersion"
+          $targetName = "fcli-$ltscVersion"
           
-          Write-Host "✓ Windows image build completed"
+          docker build . `
+            --target $targetName `
+            -t fcli-windows:$ltscVersion `
+            --build-arg FCLI_VERSION=${{ inputs.releaseTag }} `
+            --build-arg SERVERCORE_BASE=$baseImage
+          
+          Write-Host "✓ Windows $ltscVersion image build completed"
       
-      - name: Test Windows image
+      - name: Test Windows ${{ matrix.ltsc }} image
         shell: pwsh
         run: |
-          # Basic test: check fcli version
-          docker run --rm fcli-windows:test fcli --version
+          $ltscVersion = "${{ matrix.ltsc }}"
           
-          Write-Host "✓ Windows image test passed"
+          # Basic test: check fcli version
+          docker run --rm fcli-windows:$ltscVersion fcli --version
+          
+          Write-Host "✓ Windows $ltscVersion image test passed"
           Write-Host "Note: Windows images are built for testing only and are not published"
       
-      - name: Summary
+      - name: Summary for ${{ matrix.ltsc }}
         if: always()
         shell: pwsh
         run: |
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### windows image"
+          $ltscVersion = "${{ matrix.ltsc }}"
+          $baseImage = "mcr.microsoft.com/windows/servercore:$ltscVersion"
+          
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### windows-$ltscVersion image"
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value ""
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- **Base Image:** ``${{ inputs.servercoreBase }}``"
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- **Target:** ``fcli-ltsc2022``"
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- **Base Image:** ``$baseImage``"
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- **Target:** ``fcli-$ltscVersion``"
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- **Runner:** ``windows-$ltscVersion``"
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- **Status:** ✗ Not Published (test only)"
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value ""
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "Windows images are built for testing only and are not published to Docker Hub."
