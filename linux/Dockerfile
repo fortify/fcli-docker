@@ -65,6 +65,7 @@ RUN apk add --no-cache curl openssl ca-certificates
 # Build arguments
 ARG FCLI_VERSION
 ARG TARGETPLATFORM
+ARG CACHE_BUST
 
 # Validate FCLI_VERSION is provided
 RUN test -n "$FCLI_VERSION" || (echo "ERROR: FCLI_VERSION build argument is required" && exit 1)
@@ -90,7 +91,9 @@ RUN case "$TARGETPLATFORM" in \
     echo "$ARCHIVE" > /tmp/archive_name
 
 # Download fcli and signature
-RUN ARCHIVE=$(cat /tmp/archive_name) && \
+# Note: CACHE_BUST arg forces re-download for rolling tags when release is updated
+RUN echo "Cache bust: ${CACHE_BUST}" && \
+    ARCHIVE=$(cat /tmp/archive_name) && \
     DOWNLOAD_URL="https://github.com/fortify/fcli/releases/download/${FCLI_VERSION}/${ARCHIVE}" && \
     SIGNATURE_URL="${DOWNLOAD_URL}.rsa_sha256" && \
     echo "Downloading fcli from: $DOWNLOAD_URL" && \

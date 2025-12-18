@@ -132,6 +132,7 @@ jobs:
       patch: ${{ steps.meta.outputs.patch }}
       timestamp: ${{ steps.meta.outputs.timestamp }}
       is_semantic: ${{ steps.meta.outputs.is_semantic }}
+      release_updated_at: ${{ steps.meta.outputs.release_updated_at }}
     steps:
       - name: Extract metadata
         id: meta
@@ -140,6 +141,13 @@ jobs:
           VERSION="${{ inputs.releaseTag }}"
           VERSION="${VERSION#v}"
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          
+          # Get release updated_at timestamp to bust Docker cache for rolling tags
+          RELEASE_DATA=$(curl -fsSL -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/fortify/fcli/releases/tags/${{ inputs.releaseTag }}")
+          RELEASE_UPDATED_AT=$(echo "$RELEASE_DATA" | jq -r '.published_at // .created_at // ""')
+          echo "release_updated_at=${RELEASE_UPDATED_AT}" >> $GITHUB_OUTPUT
+          echo "Release updated at: ${RELEASE_UPDATED_AT}"
           
           # Try to parse semantic version components (x.y.z)
           if [[ "$VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
@@ -274,6 +282,7 @@ jobs:
             FCLI_VERSION=${{ inputs.releaseTag }}
             ALPINE_BASE=${{ inputs.alpineBase }}
             UBI_BASE=${{ inputs.ubiBase }}
+            CACHE_BUST=${{ needs.generate-metadata.outputs.release_updated_at }}
           provenance: ${{ matrix.variant.publish }}
           sbom: ${{ matrix.variant.publish }}
           load: ${{ !matrix.variant.publish }}
@@ -388,7 +397,8 @@ jobs:
             --target $targetName `
             -t fcli-windows:$ltscVersion `
             --build-arg FCLI_VERSION=${{ inputs.releaseTag }} `
-            --build-arg SERVERCORE_BASE=$baseImage
+            --build-arg SERVERCORE_BASE=$baseImage `
+            --build-arg CACHE_BUST=${{ needs.generate-metadata.outputs.release_updated_at }}
           
           Write-Host "✓ Windows $ltscVersion image build completed"
       

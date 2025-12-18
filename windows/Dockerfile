@@ -34,13 +34,16 @@ SHELL ["pwsh", "-Command"]
 
 # Build arguments
 ARG FCLI_VERSION
+ARG CACHE_BUST
 
 # Validate FCLI_VERSION is provided
 RUN $ErrorActionPreference = 'Stop'; \
     if (-not $env:FCLI_VERSION) { throw 'ERROR: FCLI_VERSION build argument is required' }
 
 # Create temp directory and download fcli with signature
+# Note: CACHE_BUST arg forces re-download for rolling tags when release is updated
 RUN $ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'; \
+    Write-Host \"Cache bust: $env:CACHE_BUST\"; \
     New-Item -ItemType Directory -Path C:\temp -Force | Out-Null; \
     Write-Host \"Downloading fcli $env:FCLI_VERSION...\"; \
     $url = \"https://github.com/fortify/fcli/releases/download/$env:FCLI_VERSION/fcli-windows.zip\"; \
