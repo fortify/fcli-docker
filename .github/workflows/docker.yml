@@ -11,26 +11,38 @@ on:
         required: true
         type: boolean
         default: false
-      alpineBase:
-        description: 'Alpine base image (default: alpine:3.23.0)'
-        required: false
-        type: string
-        default: 'alpine:3.23.0'
-      ubiBase:
-        description: 'Red Hat UBI base image (default: redhat/ubi9:9.7)'
-        required: false
-        type: string
-        default: 'redhat/ubi9:9.7'
-      servercoreVersions:
-        description: 'Windows Server Core ltsc versions to build (comma-separated, default: ltsc2022)'
-        required: false
-        type: string
-        default: 'ltsc2022,ltsc2025'
       isLatest:
         description: 'Tag as latest (set by fcli CI when releasing latest version for current major version)'
         required: false
         type: boolean
         default: false
+        
+      buildProduction:
+        description: 'Build production images (scratch, ubi9)'
+        required: false
+        type: boolean
+        default: true
+      ubiBase:
+        description: 'Red Hat UBI base image (default: redhat/ubi9:9.7)'
+        required: false
+        type: string
+        default: 'redhat/ubi9:9.7'
+
+      buildTest:
+        description: 'Build test images (alpine, windows)'
+        required: false
+        type: boolean
+        default: false
+      alpineBase:
+        description: 'Alpine base image (default: alpine:3.23.0)'
+        required: false
+        type: string
+        default: 'alpine:3.23.0'
+      servercoreVersions:
+        description: 'Windows Server Core ltsc versions to build (comma-separated, default: ltsc2022)'
+        required: false
+        type: string
+        default: 'ltsc2022,ltsc2025'
 
 permissions:
   contents: read
@@ -154,27 +166,15 @@ jobs:
     name: Build & Test Linux Images
     needs: generate-metadata
     runs-on: ubuntu-latest
+    if: ${{ inputs.buildProduction || inputs.buildTest }}
     strategy:
       matrix:
         variant:
-          - name: scratch
-            target: fcli-scratch
-            suffix: ''
-            latest_suffix: ''
-            base_image: 'scratch (statically linked binary)'
-            publish: true
-          - name: ubi9
-            target: fcli-ubi9
-            suffix: -ubi9
-            latest_suffix: -ubi9
-            base_image: ${{ inputs.ubiBase }}
-            publish: true
-          - name: alpine
-            target: fcli-alpine
-            suffix: -alpine
-            latest_suffix: -alpine
-            base_image: ${{ inputs.alpineBase }}
-            publish: false
+          - ${{ inputs.buildProduction && fromJson('{"name":"scratch","target":"fcli-scratch","suffix":"","latest_suffix":"","base_image":"scratch (statically linked binary)","publish":true}') || fromJson('null') }}
+          - ${{ inputs.buildProduction && fromJson('{"name":"ubi9","target":"fcli-ubi9","suffix":"-ubi9","latest_suffix":"-ubi9","base_image":"' + inputs.ubiBase + '","publish":true}') || fromJson('null') }}
+          - ${{ inputs.buildTest && fromJson('{"name":"alpine","target":"fcli-alpine","suffix":"-alpine","latest_suffix":"-alpine","base_image":"' + inputs.alpineBase + '","publish":false}') || fromJson('null') }}
+        exclude:
+          - null
     env:
       DOCKER_SRC: linux
       REGISTRY: docker.io
@@ -335,6 +335,7 @@ jobs:
   docker-windows:
     name: Build Windows Images (Test Only)
     needs: [generate-metadata, generate-windows-matrix]
+    if: ${{ inputs.buildTest }}
     runs-on: windows-${{ matrix.ltsc }}
     strategy:
       matrix: ${{ fromJson(needs.generate-windows-matrix.outputs.matrix) }}
