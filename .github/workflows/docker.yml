@@ -324,9 +324,9 @@ jobs:
         run: |
           VERSIONS="${{ inputs.servercoreVersions }}"
           
-          # Convert comma-separated string to JSON array
+          # Convert comma-separated string to JSON array (compact output)
           # e.g., "ltsc2022,ltsc2025" -> ["ltsc2022","ltsc2025"]
-          JSON_ARRAY=$(echo "$VERSIONS" | jq -R 'split(",") | map(gsub("^\\s+|\\s+$";""))')
+          JSON_ARRAY=$(echo "$VERSIONS" | jq -Rc 'split(",") | map(gsub("^\\s+|\\s+$";""))')
           
           echo "matrix={\"ltsc\":$JSON_ARRAY}" >> $GITHUB_OUTPUT
           echo "Generated Windows matrix: $JSON_ARRAY"
