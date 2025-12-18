@@ -16,7 +16,7 @@ on:
         required: false
         type: boolean
         default: false
-        
+
       buildProduction:
         description: 'Build production images (scratch, ubi9)'
         required: false
@@ -162,19 +162,48 @@ jobs:
             echo "Non-semantic version: ${VERSION} (no timestamp or semantic tags)"
           fi
 
+  generate-linux-matrix:
+    name: Generate Linux Matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      has_variants: ${{ steps.matrix.outputs.has_variants }}
+    steps:
+      - name: Generate matrix based on build inputs
+        id: matrix
+        run: |
+          VARIANTS='[]'
+          
+          # Add production variants if enabled
+          if [[ "${{ inputs.buildProduction }}" == "true" ]]; then
+            VARIANTS=$(echo "$VARIANTS" | jq '. + [{"name":"scratch","target":"fcli-scratch","suffix":"","latest_suffix":"","base_image":"scratch (statically linked binary)","publish":true}]')
+            VARIANTS=$(echo "$VARIANTS" | jq --arg base "${{ inputs.ubiBase }}" '. + [{"name":"ubi9","target":"fcli-ubi9","suffix":"-ubi9","latest_suffix":"-ubi9","base_image":$base,"publish":true}]')
+          fi
+          
+          # Add test variants if enabled
+          if [[ "${{ inputs.buildTest }}" == "true" ]]; then
+            VARIANTS=$(echo "$VARIANTS" | jq --arg base "${{ inputs.alpineBase }}" '. + [{"name":"alpine","target":"fcli-alpine","suffix":"-alpine","latest_suffix":"-alpine","base_image":$base,"publish":false}]')
+          fi
+          
+          # Check if we have any variants to build
+          VARIANT_COUNT=$(echo "$VARIANTS" | jq 'length')
+          if [[ "$VARIANT_COUNT" -gt 0 ]]; then
+            HAS_VARIANTS="true"
+          else
+            HAS_VARIANTS="false"
+          fi
+          
+          echo "matrix={\"variant\":$VARIANTS}" >> $GITHUB_OUTPUT
+          echo "has_variants=$HAS_VARIANTS" >> $GITHUB_OUTPUT
+          echo "Generated Linux matrix with $VARIANT_COUNT variants"
+
   docker-linux:
     name: Build & Test Linux Images
-    needs: generate-metadata
+    needs: [generate-metadata, generate-linux-matrix]
+    if: ${{ needs.generate-linux-matrix.outputs.has_variants == 'true' }}
     runs-on: ubuntu-latest
-    if: ${{ inputs.buildProduction || inputs.buildTest }}
     strategy:
-      matrix:
-        variant:
-          - ${{ inputs.buildProduction && fromJson('{"name":"scratch","target":"fcli-scratch","suffix":"","latest_suffix":"","base_image":"scratch (statically linked binary)","publish":true}') || fromJson('null') }}
-          - ${{ inputs.buildProduction && fromJson('{"name":"ubi9","target":"fcli-ubi9","suffix":"-ubi9","latest_suffix":"-ubi9","base_image":"' + inputs.ubiBase + '","publish":true}') || fromJson('null') }}
-          - ${{ inputs.buildTest && fromJson('{"name":"alpine","target":"fcli-alpine","suffix":"-alpine","latest_suffix":"-alpine","base_image":"' + inputs.alpineBase + '","publish":false}') || fromJson('null') }}
-        exclude:
-          - null
+      matrix: ${{ fromJson(needs.generate-linux-matrix.outputs.matrix) }}
     env:
       DOCKER_SRC: linux
       REGISTRY: docker.io
