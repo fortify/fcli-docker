@@ -10,28 +10,32 @@
 # on the base images, and potentially having to provide refreshed images for older fcli versions
 # to fix such CVEs.
 #
-# For now, we automatically publish both the fcli-scratch and fcli-ubi9 images. The scratch image
-# has minimal attack surface, while the UBI9 image provides a shell-based environment for running
-# multiple fcli commands in sequence. If there's demand, we can also publish alpine and/or other
-# (like busybox) images that include a shell. Primary advantage is that this would allow for running
-# a sequence of fcli commands in a single container invocation (potentially removing the need to
-# mount the data directory to a persistent volume/host directory, as fcli state will be stored inside
-# the container for as long the container is alive). Primary disadvantage is that users might expect
+# We publish the following Linux images:
+# - fcli-scratch: minimal scratch-based image (preferred for minimal attack surface)
+# - fcli-ubi9: UBI9-based image providing a shell environment for running multiple fcli commands
+# - fcli-ubi9-sc<version>: UBI9-based image with ScanCentral Client pre-installed (embedded JRE)
+#
+# The scratch image has minimal attack surface, while the UBI9 image provides a shell-based
+# environment for running multiple fcli commands in sequence. The fcli-ubi9-sc variants extend
+# fcli-ubi9 with a pre-installed ScanCentral Client (including an embedded JRE), so users can
+# run 'scancentral' commands directly inside the container without any additional setup.
+#
+# Note: if there's demand, we can also publish alpine and/or other (like busybox) images that
+# include a shell. Primary advantage is that this would allow for running a sequence of fcli
+# commands in a single container invocation. Primary disadvantage is that users might expect
 # to be able to run something like the following:
 #   fcli tool sc-client install
 #   scancentral package ...
 #   submit scan request, ...
-# However, these images don't include Java (required to run ScanCentral Client) nor any other
-# build tools (which may be required by ScanCentral Client to properly package application source
-# code). Users would need to build a custom image that includes fcli and any other tools required
-# for building/packaging an application, or alternatively any of the fcli Docker images can be
-# used to install ScanCentral Client on the host system (using proper volume mappings), from
-# where it can be run with (presumably) all relevant build tools and Java being available.
+# However, the plain shell images don't include Java (required to run ScanCentral Client) nor
+# any other build tools. Use the fcli-ubi9-sc variants for pre-installed ScanCentral Client,
+# or mount a host directory and install via fcli from one of the other image variants.
 # 
 # Build Arguments:
-# - FCLI_VERSION: fcli version to download (required, e.g., "v3.14.0")
-# - ALPINE_BASE: Alpine base image (default: alpine:3.23.0)
-# - UBI_BASE: Red Hat UBI base image (default: redhat/ubi9:9.7)
+# - FCLI_VERSION:       fcli version to download (required, e.g., "v3.14.0")
+# - ALPINE_BASE:        Alpine base image (default: alpine:3.23.0)
+# - UBI_BASE:           Red Hat UBI base image (default: redhat/ubi9:9.7)
+# - SC_CLIENT_VERSION:  ScanCentral Client version to install (required for fcli-ubi9-sc target)
 #
 # All of the targets defined below have more or less the same structure:
 # - Add fcli user to /etc/passwd
@@ -177,6 +181,34 @@ ENV FCLI_USER_HOME=/data
 USER fcli
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["/bin/bash"]
+
+# ============================================================================
+# Stage: fcli-ubi9-sc
+# UBI9 image with fcli and ScanCentral Client (with embedded JRE) pre-installed.
+# Extends fcli-ubi9; installs sc-client into /opt/fortify/sc-client and writes
+# the fcli install descriptor into fcli state dir.
+# Requires SC_CLIENT_VERSION build argument.
+# ============================================================================
+FROM fcli-ubi9 AS fcli-ubi9-sc
+
+ARG SC_CLIENT_VERSION
+LABEL org.opencontainers.image.title="Fortify CLI (UBI9 + ScanCentral Client)" \
+      org.opencontainers.image.description="Fortify CLI on Red Hat Universal Base Image 9, with ScanCentral Client pre-installed" \
+      com.fortify.sc_client.version="${SC_CLIENT_VERSION}"
+
+USER root
+RUN test -n "$SC_CLIENT_VERSION" || \
+      (echo "ERROR: SC_CLIENT_VERSION build argument is required for this target" && exit 1) && \
+    (fcli tool definitions update || echo "Warning: Could not update tool definitions; using bundled definitions") && \
+    fcli tool sc-client install \
+      --version "$SC_CLIENT_VERSION" \
+      --install-dir /opt/fortify/sc-client \
+      --with-jre && \
+    chown -R 10001:10001 /opt/fortify/sc-client "${FCLI_USER_HOME}/.fortify"
+ENV SC_CLIENT_HOME=/opt/fortify/sc-client
+ENV SC_CLIENT_CMD=/opt/fortify/sc-client/bin/scancentral
+ENV PATH="/opt/fortify/sc-client/bin:${PATH}"
+USER fcli
 
 # ============================================================================
 # Stage: fcli-scratch

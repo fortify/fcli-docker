@@ -16,9 +16,8 @@ on:
         required: false
         type: boolean
         default: false
-
       buildProduction:
-        description: 'Build production images (scratch, ubi9)'
+        description: 'Build production images (scratch, ubi9, ubi9-sc variants)'
         required: false
         type: boolean
         default: true
@@ -27,7 +26,17 @@ on:
         required: false
         type: string
         default: 'redhat/ubi9:9.7'
-
+      scClientVersions:
+        description: |
+          Additional ScanCentral Client versions to build (comma-separated, e.g. "25.4,26.2").
+          These are merged with any already-published ubi9-sc versions for this release tag.
+          When empty and existing ubi9-sc images are found, only those existing versions are refreshed.
+          When empty and no existing ubi9-sc images are found (first publish), the two latest
+          YY.Q major versions from the tool definitions are used (each resolved to the latest
+          available patch release by fcli at install time).
+        required: false
+        type: string
+        default: ''
       buildTest:
         description: 'Build test images (alpine, windows)'
         required: false
@@ -177,22 +186,137 @@ jobs:
       matrix: ${{ steps.matrix.outputs.matrix }}
       has_variants: ${{ steps.matrix.outputs.has_variants }}
     steps:
+      - name: Determine sc-client versions to build
+        id: sc-versions
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+        run: |
+          if [[ "${{ inputs.buildProduction }}" != "true" ]]; then
+            echo "sc_versions=[]" >> $GITHUB_OUTPUT
+            echo "Skipping sc-client version detection (production builds not enabled)"
+            exit 0
+          fi
+
+          BASE_VERSION="${{ inputs.releaseTag }}"
+          BASE_VERSION="${BASE_VERSION#v}"
+          IMAGE="fortifydocker/fcli"
+          SC_PREFIX="${BASE_VERSION}-ubi9-sc"
+
+          # Obtain Docker Hub auth token using the same credentials as for publishing.
+          # This avoids anonymous rate limits and is consistent with the publish flow.
+          DH_TOKEN=""
+          if [[ -n "$DOCKER_USERNAME" && -n "$DOCKER_PASSWORD" ]]; then
+            DH_TOKEN=$(curl -fsSL -X POST \
+              -H "Content-Type: application/json" \
+              -d "{\"username\":\"$DOCKER_USERNAME\",\"password\":\"$DOCKER_PASSWORD\"}" \
+              'https://hub.docker.com/v2/users/login' 2>/dev/null | jq -r '.token // empty' 2>/dev/null || true)
+          fi
+
+          # Build curl argument array (with or without auth header)
+          CURL_ARGS=(-fsSL)
+          [[ -n "$DH_TOKEN" ]] && CURL_ARGS+=(-H "Authorization: JWT $DH_TOKEN")
+
+          # Collect all image tags from Docker Hub using pagination (capped at 5 pages = 500 tags)
+          ALL_TAGS=""
+          PAGE_URL="https://hub.docker.com/v2/repositories/${IMAGE}/tags?page_size=100"
+          MAX_PAGES=5
+          PAGE=0
+          while [[ -n "$PAGE_URL" && $PAGE -lt $MAX_PAGES ]]; do
+            RESPONSE=$(curl "${CURL_ARGS[@]}" "$PAGE_URL" 2>/dev/null || echo '{}')
+            PAGE_TAGS=$(echo "$RESPONSE" | jq -r '.results[]?.name // empty' 2>/dev/null || true)
+            ALL_TAGS="${ALL_TAGS}"$'\n'"${PAGE_TAGS}"
+            PAGE_URL=$(echo "$RESPONSE" | jq -r '.next // empty' 2>/dev/null || true)
+            PAGE=$((PAGE + 1))
+          done
+
+          # Extract already-published sc-client versions from matching tags.
+          # Only accept tags of the exact form "{fcliVersion}-ubi9-sc{X.Y}" (no timestamp suffix).
+          EXISTING_VERSIONS=$(echo "$ALL_TAGS" | \
+            grep -E "^${SC_PREFIX}[0-9]+\.[0-9]+$" | \
+            sed "s/^${SC_PREFIX}//" | \
+            sort -uV || true)
+
+          # Normalise explicit input versions (trim whitespace, drop blanks)
+          INPUT_VERSIONS=""
+          if [[ -n "${{ inputs.scClientVersions }}" ]]; then
+            INPUT_VERSIONS=$(echo "${{ inputs.scClientVersions }}" | tr ',' '\n' | \
+              sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$' | sort -uV)
+          fi
+
+          # Decision tree:
+          #  A) input given              → merge input + existing
+          #  B) no input, existing found → refresh existing only
+          #  C) no input, no existing    → bootstrap: parse tool-definitions YAML,
+          #                                take the last 2 YY.Q release groups
+          if [[ -n "$INPUT_VERSIONS" ]]; then
+            # A: merge
+            SC_VERSIONS=$(printf '%s\n%s\n' "$EXISTING_VERSIONS" "$INPUT_VERSIONS" | \
+              sort -uV | grep -v '^$')
+            echo "Using merged sc-client versions (input + existing): $(echo $SC_VERSIONS | tr '\n' ' ')"
+
+          elif [[ -n "$EXISTING_VERSIONS" ]]; then
+            # B: refresh only
+            SC_VERSIONS="$EXISTING_VERSIONS"
+            echo "Refreshing existing sc-client versions: $(echo $SC_VERSIONS | tr '\n' ' ')"
+
+          else
+            # C: bootstrap — fetch tool definitions and pick 2 latest YY.Q groups
+            echo "No existing sc-client images found; bootstrapping from tool definitions..."
+            TOOL_DEF_URL="https://raw.githubusercontent.com/fortify/tool-definitions/refs/heads/main/v1/sc-client.yaml"
+            SC_YAML=$(curl -fsSL "$TOOL_DEF_URL" 2>/dev/null || echo "")
+            if [[ -z "$SC_YAML" ]]; then
+              echo "::warning::Could not fetch sc-client tool definitions; no sc-client images will be built"
+              SC_VERSIONS=""
+            else
+              # Extract all full version strings (e.g. 25.4.0, 25.2.1), strip the patch
+              # component to get the YY.Q group, deduplicate, sort, take the 2 latest.
+              SC_VERSIONS=$(echo "$SC_YAML" | \
+                grep -E '^  - version: [0-9]+\.[0-9]+\.[0-9]+' | \
+                sed 's/.*version: //' | \
+                grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | \
+                sed 's/\.[0-9]*$//' | \
+                sort -uV | \
+                tail -2)
+              echo "Bootstrapped sc-client versions from tool definitions: $(echo $SC_VERSIONS | tr '\n' ' ')"
+            fi
+          fi
+
+          # Emit as a compact JSON array
+          SC_VERSIONS_JSON=$(echo "$SC_VERSIONS" | grep -v '^$' | \
+            jq -Rcn '[inputs | select(length > 0)]' 2>/dev/null || echo '[]')
+
+          echo "sc_versions=${SC_VERSIONS_JSON}" >> $GITHUB_OUTPUT
+          echo "Final sc-client versions to build: $SC_VERSIONS_JSON"
+
       - name: Generate matrix based on build inputs
         id: matrix
         run: |
           VARIANTS='[]'
-          
+
           # Add production variants if enabled (use -c for compact output)
           if [[ "${{ inputs.buildProduction }}" == "true" ]]; then
-            VARIANTS=$(echo "$VARIANTS" | jq -c '. + [{"name":"scratch","target":"fcli-scratch","suffix":"","latest_suffix":"","base_image":"scratch (statically linked binary)","publish":true}]')
-            VARIANTS=$(echo "$VARIANTS" | jq -c --arg base "${{ inputs.ubiBase }}" '. + [{"name":"ubi9","target":"fcli-ubi9","suffix":"-ubi9","latest_suffix":"-ubi9","base_image":$base,"publish":true}]')
+            VARIANTS=$(echo "$VARIANTS" | jq -c '. + [{"name":"scratch","target":"fcli-scratch","suffix":"","latest_suffix":"","sc_client_version":"","base_image":"scratch (statically linked binary)","publish":true}]')
+            VARIANTS=$(echo "$VARIANTS" | jq -c --arg base "${{ inputs.ubiBase }}" '. + [{"name":"ubi9","target":"fcli-ubi9","suffix":"-ubi9","latest_suffix":"-ubi9","sc_client_version":"","base_image":$base,"publish":true}]')
+
+            # Add a ubi9-sc variant for each resolved sc-client version
+            SC_VERSIONS='${{ steps.sc-versions.outputs.sc_versions }}'
+            if [[ -n "$SC_VERSIONS" && "$SC_VERSIONS" != "[]" ]]; then
+              while IFS= read -r SC_VER; do
+                [[ -z "$SC_VER" ]] && continue
+                VARIANTS=$(echo "$VARIANTS" | jq -c \
+                  --arg scv "$SC_VER" \
+                  --arg base "${{ inputs.ubiBase }}" \
+                  '. + [{"name":("ubi9-sc"+$scv),"target":"fcli-ubi9-sc","suffix":("-ubi9-sc"+$scv),"latest_suffix":"","sc_client_version":$scv,"base_image":("fcli-ubi9 + sc-client "+$scv),"publish":true}]')
+              done < <(echo "$SC_VERSIONS" | jq -r '.[]')
+            fi
           fi
-          
+
           # Add test variants if enabled
           if [[ "${{ inputs.buildTest }}" == "true" ]]; then
-            VARIANTS=$(echo "$VARIANTS" | jq -c --arg base "${{ inputs.alpineBase }}" '. + [{"name":"alpine","target":"fcli-alpine","suffix":"-alpine","latest_suffix":"-alpine","base_image":$base,"publish":false}]')
+            VARIANTS=$(echo "$VARIANTS" | jq -c --arg base "${{ inputs.alpineBase }}" '. + [{"name":"alpine","target":"fcli-alpine","suffix":"-alpine","latest_suffix":"-alpine","sc_client_version":"","base_image":$base,"publish":false}]')
           fi
-          
+
           # Check if we have any variants to build
           VARIANT_COUNT=$(echo "$VARIANTS" | jq 'length')
           if [[ "$VARIANT_COUNT" -gt 0 ]]; then
@@ -200,7 +324,7 @@ jobs:
           else
             HAS_VARIANTS="false"
           fi
-          
+
           echo "matrix={\"variant\":$VARIANTS}" >> $GITHUB_OUTPUT
           echo "has_variants=$HAS_VARIANTS" >> $GITHUB_OUTPUT
           echo "Generated Linux matrix with $VARIANT_COUNT variants"
@@ -253,8 +377,8 @@ jobs:
             TAGS="${TAGS},${{ env.IMAGE_NAME }}:${MAJOR}.${MINOR}${SUFFIX}"
             TAGS="${TAGS},${{ env.IMAGE_NAME }}:${MAJOR}${SUFFIX}"
             
-            # Add 'latest' tag if explicitly requested
-            if [[ "${{ inputs.isLatest }}" == "true" ]]; then
+            # Add 'latest' tag if explicitly requested (not for sc-client variants)
+            if [[ "${{ inputs.isLatest }}" == "true" && -z "${{ matrix.variant.sc_client_version }}" ]]; then
               TAGS="${TAGS},${{ env.IMAGE_NAME }}:latest${LATEST_SUFFIX}"
             fi
           else
@@ -283,9 +407,10 @@ jobs:
             ALPINE_BASE=${{ inputs.alpineBase }}
             UBI_BASE=${{ inputs.ubiBase }}
             CACHE_BUST=${{ needs.generate-metadata.outputs.release_updated_at }}
+            SC_CLIENT_VERSION=${{ matrix.variant.sc_client_version }}
           provenance: ${{ matrix.variant.publish }}
           sbom: ${{ matrix.variant.publish }}
-          load: ${{ !matrix.variant.publish }}
+          load: ${{ !matrix.variant.publish || !inputs.doPublish }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
       
@@ -295,24 +420,28 @@ jobs:
           SUFFIX="${{ matrix.variant.suffix }}"
           TAG="${{ env.IMAGE_NAME }}:${VERSION}${SUFFIX}"
           TEST_DIR="${PWD}/test-${{ matrix.variant.name }}"
-          
-          # Try to pull image if published, otherwise use local
-          docker pull ${TAG} 2>/dev/null || \
-            docker tag $(docker images -q ${TAG} | head -1) ${TAG} 2>/dev/null || true
-          
-          mkdir -p ${TEST_DIR}
-          
+
           # Determine command prefix based on variant
           if [[ "${{ matrix.variant.name }}" == "scratch" ]]; then
             CMD_PREFIX=""
           else
             CMD_PREFIX="fcli"
           fi
-          
-          docker run --rm -u $(id -u):$(id -g) -v ${TEST_DIR}:/data \
-            ${TAG} ${CMD_PREFIX} tool sc-client install
-          
-          test -f ${TEST_DIR}/fortify/tools/bin/scancentral
+
+          if [[ -n "${{ matrix.variant.sc_client_version }}" ]]; then
+            # ubi9-sc variant: verify pre-installed sc-client and environment variables
+            docker run --rm "${TAG}" sh -c \
+              'test -n "$SC_CLIENT_HOME" && \
+               test -x "$SC_CLIENT_HOME/bin/scancentral" && \
+               echo "SC_CLIENT_HOME=$SC_CLIENT_HOME" && \
+               echo "SC_CLIENT_CMD=$SC_CLIENT_CMD"'
+          else
+            # Other variants: dynamically install sc-client via fcli and verify
+            mkdir -p "${TEST_DIR}"
+            docker run --rm -u $(id -u):$(id -g) -v "${TEST_DIR}:/data" \
+              "${TAG}" ${CMD_PREFIX} tool sc-client install
+            test -f "${TEST_DIR}/fortify/tools/bin/scancentral"
+          fi
           echo "✓ ${{ matrix.variant.name }} image test passed"
       
       - name: Generate summary for ${{ matrix.variant.name }}
@@ -330,6 +459,9 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **Base Image:** \`${{ matrix.variant.base_image }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Target:** \`${{ matrix.variant.target }}\`" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "${{ matrix.variant.sc_client_version }}" ]]; then
+            echo "- **ScanCentral Client:** \`${{ matrix.variant.sc_client_version }}\` (pre-installed with embedded JRE)" >> $GITHUB_STEP_SUMMARY
+          fi
           echo "- **Status:** ${PUBLISH_STATUS}" >> $GITHUB_STEP_SUMMARY
           
           # Show generated tags if variant is publishable
