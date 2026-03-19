@@ -291,7 +291,7 @@ jobs:
           echo "Generated Linux matrix with $VARIANT_COUNT variants"
 
   docker-linux:
-    name: Build & Test Linux Images
+    name: Build & Test Linux (${{ matrix.variant.name }})
     needs: [generate-metadata, generate-linux-matrix]
     if: ${{ needs.generate-linux-matrix.outputs.has_variants == 'true' }}
     runs-on: ubuntu-latest
