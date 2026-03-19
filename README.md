@@ -37,6 +37,31 @@ docker run -it --rm fortifydocker/fcli:latest-ubi9 /bin/bash
 docker run --rm fortifydocker/fcli:latest-ubi9 bash -c "fcli --version && fcli tool list"
 ```
 
+#### 3. **fcli-ubi9-sc\<version\>** (UBI9 + ScanCentral Client)
+- **Base:** `fcli-ubi9` (inherits all UBI9 image features)
+- **Size:** ~500-600 MB (includes embedded JRE and ScanCentral Client)
+- **Use case:** Running ScanCentral Client commands directly inside the container without any additional setup
+- **Security:** Same as UBI9 image; sc-client and embedded JRE are pre-installed at a fixed path
+- **Shell:** `/bin/bash`
+- **Pre-installed tools:** ScanCentral Client at `/opt/fortify/sc-client` with embedded JRE
+- **Environment variables set** (matching `fcli tool sc-client env` output):
+  - `SC_CLIENT_HOME=/opt/fortify/sc-client`
+  - `SC_CLIENT_CMD=/opt/fortify/sc-client/bin/scancentral`
+  - `PATH` is prepended with `/opt/fortify/sc-client/bin`
+
+```bash
+# Run scancentral directly (no installation needed)
+docker run --rm fortifydocker/fcli:latest-ubi9-sc25.4 scancentral --version
+
+# Use fcli tool env to source environment (already set, but useful for scripts)
+docker run --rm fortifydocker/fcli:latest-ubi9-sc25.4 bash -c "\
+  fcli tool sc-client env shell && scancentral package ..."
+```
+
+> **Note:** The sc-client install descriptor is stored in the image at
+> `/data/.fortify/tool-data/sc-client/`, so `fcli tool sc-client env` and related
+> fcli commands can locate the pre-installed sc-client automatically.
+
 ### Test-Only Images (Not Published)
 
 #### 3. **fcli-alpine**
@@ -54,13 +79,30 @@ docker run --rm fortifydocker/fcli:latest-ubi9 bash -c "fcli --version && fcli t
 
 ## Image Tags
 
-| Tag Pattern | Description | Example |
-|-------------|-------------|---------|
+All tag patterns apply to both scratch and ubi9 images. UBI9 tags carry a `-ubi9` suffix;
+UBI9+ScanCentral Client tags carry a `-ubi9-sc{scVersion}` suffix.
+
+| Tag pattern | Description | Example |
+|---|---|---|
 | `latest` | Latest stable release (scratch) | `fortifydocker/fcli:latest` |
-| `{version}` | Specific version (scratch) | `fortifydocker/fcli:3.14.0` |
-| `{version}-ubi9` | Specific version (UBI9) | `fortifydocker/fcli:3.14.0-ubi9` |
-| `{version}-{date}` | Republished with updated base images | `fortifydocker/fcli:3.14.0-20251216` |
-| `{version}-ubi9-{date}` | UBI9 with updated base images | `fortifydocker/fcli:3.14.0-ubi9-20251216` |
+| `latest-ubi9` | Latest stable release (UBI9) | `fortifydocker/fcli:latest-ubi9` |
+| `{version}` | Specific fcli version (scratch) | `fortifydocker/fcli:3.15.0` |
+| `{version}-ubi9` | Specific fcli version (UBI9) | `fortifydocker/fcli:3.15.0-ubi9` |
+| `{version}-ubi9-sc{scVersion}` | UBI9 with ScanCentral Client pre-installed | `fortifydocker/fcli:3.15.0-ubi9-sc25.4` |
+| `{major}.{minor}` | Latest patch for minor version (scratch) | `fortifydocker/fcli:3.15` |
+| `{major}.{minor}-ubi9` | Latest patch for minor version (UBI9) | `fortifydocker/fcli:3.15-ubi9` |
+| `{major}.{minor}-ubi9-sc{scVersion}` | Latest patch for minor version (UBI9+sc-client) | `fortifydocker/fcli:3.15-ubi9-sc25.4` |
+| `{major}` | Latest release for major version (scratch) | `fortifydocker/fcli:3` |
+| `{major}-ubi9` | Latest release for major version (UBI9) | `fortifydocker/fcli:3-ubi9` |
+| `{major}-ubi9-sc{scVersion}` | Latest release for major version (UBI9+sc-client) | `fortifydocker/fcli:3-ubi9-sc25.4` |
+| `{version}-{timestamp}` | Immutable timestamped tag (scratch) | `fortifydocker/fcli:3.15.0-20260319120000` |
+| `{version}-ubi9-{timestamp}` | Immutable timestamped tag (UBI9) | `fortifydocker/fcli:3.15.0-ubi9-20260319120000` |
+| `{version}-ubi9-sc{scVersion}-{timestamp}` | Immutable timestamped tag (UBI9+sc-client) | `fortifydocker/fcli:3.15.0-ubi9-sc25.4-20260319120000` |
+
+> **Note on ScanCentral Client versions:** `{scVersion}` is in `YY.Q` form (e.g., `25.4`).
+> The image contains the latest available patch release within that quarter at the time it was
+> built. Timestamped tags are immutable; the floating `{version}` and `{major}.{minor}` tags
+> are updated when images are refreshed (e.g., for base-image CVE fixes).
 
 ## Building Locally
 
@@ -75,25 +117,32 @@ cd linux
 
 # Build scratch image (default)
 docker build . \
-  --build-arg FCLI_VERSION=v3.14.0 \
+  --build-arg FCLI_VERSION=v3.15.0 \
   --target fcli-scratch \
   -t fcli:scratch
 
 # Build UBI9 image
 docker build . \
-  --build-arg FCLI_VERSION=v3.14.0 \
+  --build-arg FCLI_VERSION=v3.15.0 \
   --target fcli-ubi9 \
   -t fcli:ubi9
 
+# Build UBI9 image with ScanCentral Client 25.4 pre-installed
+docker build . \
+  --build-arg FCLI_VERSION=v3.15.0 \
+  --build-arg SC_CLIENT_VERSION=25.4 \
+  --target fcli-ubi9-sc \
+  -t fcli:ubi9-sc25.4
+
 # Build Alpine image
 docker build . \
-  --build-arg FCLI_VERSION=v3.14.0 \
+  --build-arg FCLI_VERSION=v3.15.0 \
   --target fcli-alpine \
   -t fcli:alpine
 
 # Build with custom base images
 docker build . \
-  --build-arg FCLI_VERSION=v3.14.0 \
+  --build-arg FCLI_VERSION=v3.15.0 \
   --build-arg ALPINE_BASE=alpine:3.23.0 \
   --build-arg UBI_BASE=redhat/ubi9:9.7 \
   --target fcli-scratch \
@@ -106,7 +155,7 @@ docker build . \
 cd windows
 
 docker build . `
-  --build-arg FCLI_VERSION=v3.14.0 `
+  --build-arg FCLI_VERSION=v3.15.0 `
   --target fcli-ltsc2022 `
   -t fcli:windows
 ```
@@ -162,14 +211,40 @@ jobs:
           fcli tool sc-client install
 ```
 
+Or use the UBI9+ScanCentral Client image to skip the install step:
+
+```yaml
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    container:
+      image: fortifydocker/fcli:latest-ubi9-sc25.4
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Run scancentral
+        run: |
+          scancentral --version
+          scancentral package -bt mvn -o package.zip
+```
+
 #### GitLab CI
 
 ```yaml
+# Plain UBI9 — install sc-client at runtime
 scan:
   image: fortifydocker/fcli:latest-ubi9
   script:
     - fcli --version
     - fcli tool sc-client install
+
+# Or use the pre-installed sc-client variant
+scan-with-sc:
+  image: fortifydocker/fcli:latest-ubi9-sc25.4
+  script:
+    - scancentral --version
+    - scancentral package -bt mvn -o package.zip
 ```
 
 #### Jenkins Pipeline
@@ -206,10 +281,10 @@ docker run --rm \
 # The FCLI_USER_HOME environment variable handles user home directory resolution
 ```
 
-### Interactive Shell (UBI9 only)
+### Interactive Shell and ScanCentral Client (UBI9 variants)
 
 ```bash
-# Start interactive bash session
+# Start interactive bash session (plain UBI9)
 docker run -it --rm \
   -v $(pwd)/data:/data \
   fortifydocker/fcli:latest-ubi9 \
@@ -220,9 +295,15 @@ fcli --version
 fcli tool sc-client install
 fcli tool list
 
-# UBI9 has package manager - install additional tools if needed
+# UBI9 has package manager — install additional tools if needed
 yum install -y jq
 exit
+
+# Use the UBI9+sc-client image to run scancentral without any installation
+docker run --rm \
+  -v $(pwd)/data:/data \
+  fortifydocker/fcli:latest-ubi9-sc25.4 \
+  scancentral package -bt mvn -o package.zip
 ```
 
 ## Architecture & Security
@@ -251,14 +332,21 @@ Public key is embedded in Dockerfiles and matches the key used by `fortify-setup
 │  - Extracts binary      │  - Outputs /tmp/fcli-bin/fcli
 └─────────┬───────────────┘
           │
-          ├────────────────────────────────┐
-          │                                │
-┌─────────▼─────────┐   ┌────────────▼────────────┐
-│  fcli-scratch     │   │  fcli-ubi9              │
-│  Copies from      │   │  Standard UBI9 (not     │
-│  downloader       │   │  minimal) for package   │
-└───────────────────┘   │  installation support   │
-                        └─────────────────────────┘
+          ├──────────────────────────────────────────────┐
+          │                                              │
+┌─────────▼─────────┐   ┌──────────────▼────────────┐   │
+│  fcli-scratch     │   │  fcli-ubi9                │   │
+│  Copies from      │   │  Standard UBI9 (not       │   │
+│  downloader       │   │  minimal) for package     │   │
+└───────────────────┘   │  installation support     │   │
+                        └──────────────┬────────────┘   │
+                                       │                │
+                        ┌──────────────▼────────────┐   │
+                        │  fcli-ubi9-sc             │   │
+                        │  Extends fcli-ubi9;       │   │
+                        │  installs ScanCentral     │   │
+                        │  Client + embedded JRE    │◄──┘
+                        └───────────────────────────┘
 ```
 
 ### Security Features
@@ -292,9 +380,10 @@ docker inspect fortifydocker/fcli:latest | jq '.[0].Config.Labels'
 
 | Argument | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `FCLI_VERSION` | Yes | - | fcli release tag (e.g., `v3.14.0`) |
+| `FCLI_VERSION` | Yes | - | fcli release tag (e.g., `v3.15.0`) |
 | `ALPINE_BASE` | No | `alpine:3.23.0` | Alpine base image for downloader and alpine target |
 | `UBI_BASE` | No | `redhat/ubi9:9.7` | Red Hat UBI9 standard base image (not minimal) |
+| `SC_CLIENT_VERSION` | Required for `fcli-ubi9-sc` target | - | ScanCentral Client version to pre-install (e.g., `25.4`); resolved to latest patch release at build time |
 
 ### Windows Dockerfile
 
@@ -309,29 +398,36 @@ docker inspect fortifydocker/fcli:latest | jq '.[0].Config.Labels'
 The `.github/workflows/docker.yml` workflow provides:
 
 - **Automated builds:** Triggered via workflow_dispatch
-- **Multi-image support:** Builds scratch, UBI9, Alpine (test), and Windows (test)
+- **Multi-image support:** Builds scratch, UBI9, UBI9+ScanCentral Client (multiple sc-client versions), Alpine (test), and Windows (test)
 - **Signature verification:** Built into Dockerfile
-- **Automated testing:** Tests tool installation in each image
+- **Automated testing:** Tests tool installation in each image; verifies pre-installed sc-client and env vars in ubi9-sc variants
 - **SBOM generation:** Provenance and SBOM attestation
 - **Base image updates:** Support for republishing with updated base images
-- **Selective publishing:** Publishes only scratch and UBI9 to Docker Hub
+- **Selective publishing:** Publishes scratch, UBI9 and UBI9+sc-client variants to Docker Hub
+- **Automatic sc-client version detection:**
+  - First publish: bootstraps by picking the two latest YY.Q release groups from the [tool definitions](https://github.com/fortify/tool-definitions)
+  - Subsequent refreshes: detects already-published sc-client versions from existing Docker Hub tags and refreshes those
+  - Additional sc-client versions can be specified explicitly via the `scClientVersions` input
 
 ### Triggering Builds
 
 ```bash
-# Via GitHub CLI
+# Via GitHub CLI — initial publish or full refresh
 gh workflow run docker.yml \
-  -f releaseTag=v3.14.0 \
+  -f releaseTag=v3.15.0 \
   -f doPublish=true \
-  -f alpineBase=alpine:3.23.0 \
   -f ubiBase=redhat/ubi9:9.7
 
-# Update base images for existing release
+# Refresh existing images only (sc-client versions auto-detected from published tags)
 gh workflow run docker.yml \
-  -f releaseTag=v3.14.0 \
+  -f releaseTag=v3.15.0 \
+  -f doPublish=true
+
+# Add a new sc-client version to an existing release
+gh workflow run docker.yml \
+  -f releaseTag=v3.15.0 \
   -f doPublish=true \
-  -f updateBaseImages=true \
-  -f ubiBase=redhat/ubi9:9.7
+  -f scClientVersions=26.2
 ```
 
 ## Maintenance
@@ -355,15 +451,16 @@ Base images should be updated periodically for security patches:
 
 3. **Update defaults in Dockerfile** or **trigger workflow with custom bases**
 
-4. **Republish existing fcli version** if needed:
+4. **Republish existing fcli version** with updated base images:
    ```bash
    gh workflow run docker.yml \
-     -f releaseTag=v3.14.0 \
+     -f releaseTag=v3.15.0 \
      -f doPublish=true \
-     -f updateBaseImages=true \
-     -f ubiBase=redhat/ubi9:9.7
+     -f ubiBase=redhat/ubi9:9.8
    ```
-   This creates tags like `3.14.0-20251216` and `3.14.0-ubi9-20251216`
+   This creates new immutable timestamped tags (e.g., `3.15.0-20260401120000`,
+   `3.15.0-ubi9-20260401120000`, `3.15.0-ubi9-sc25.4-20260401120000`) while also
+   updating the floating `3.15.0`, `3.15`, and `3` tags to the refreshed images.
 
 ### Testing Checklist
 
