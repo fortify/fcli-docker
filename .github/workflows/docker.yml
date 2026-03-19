@@ -65,18 +65,15 @@ jobs:
       matrix:
         include:
           - name: Alpine
-            registry: dockerhub
-            repo: library/alpine
+            image: docker://library/alpine
             current: ${{ inputs.alpineBase }}
             pattern: '^3\.[0-9]+\.[0-9]+$'
           - name: Red Hat UBI9
-            registry: dockerhub
-            repo: redhat/ubi9
+            image: docker://redhat/ubi9
             current: ${{ inputs.ubiBase }}
             pattern: '^9\.[0-9]+(\.[0-9]+)?$'
           - name: Windows Server Core
-            registry: mcr
-            repo: windows/servercore
+            image: docker://mcr.microsoft.com/windows/servercore
             current_versions: ${{ inputs.servercoreVersions }}
             pattern: '^ltsc[0-9]+$'
       fail-fast: false
@@ -84,51 +81,32 @@ jobs:
       - name: Check ${{ matrix.name }}
         continue-on-error: true
         run: |
-          echo "Checking ${{ matrix.name }}..."
-          CURRENT="${{ matrix.current }}"
-          PATTERN="${{ matrix.pattern }}"
-          
-          if [[ "${{ matrix.registry }}" == "dockerhub" ]]; then
-            REPO="${{ matrix.repo }}"
-            
-            # Get tags from Docker Hub API
-            LATEST=$(curl -fsSL "https://registry.hub.docker.com/v2/repositories/${REPO}/tags?page_size=100" 2>/dev/null | \
-              jq -r '.results[].name' 2>/dev/null | grep -E "$PATTERN" | sort -V | tail -1)
-            
-            if [[ -z "$LATEST" ]]; then
-              echo "::notice::Could not determine latest ${{ matrix.name }} version"
-              echo "Current: $CURRENT"
+          # skopeo is pre-installed on ubuntu-latest, handles pagination internally,
+          # and works uniformly across Docker Hub and MCR without authentication
+          # (all referenced images are public).
+          LATEST=$(skopeo list-tags '${{ matrix.image }}' 2>/dev/null | \
+            jq -r '.Tags[]' 2>/dev/null | grep -E '${{ matrix.pattern }}' | sort -V | tail -1)
+
+          if [[ -z "$LATEST" ]]; then
+            echo "::notice::Could not determine latest ${{ matrix.name }} version"
+          elif [[ -n "${{ matrix.current }}" ]]; then
+            CURRENT_TAG="${{ matrix.current }}"
+            CURRENT_TAG="${CURRENT_TAG##*:}"
+            if [[ "$LATEST" != "$CURRENT_TAG" ]]; then
+              echo "::warning::Newer ${{ matrix.name }} version available: $LATEST (current: $CURRENT_TAG)"
             else
-              CURRENT_TAG="${CURRENT##*:}"
-              if [[ "$LATEST" != "$CURRENT_TAG" ]]; then
-                echo "::warning::Newer ${{ matrix.name }} version available: $LATEST (current: $CURRENT_TAG)"
-              else
-                echo "✓ ${{ matrix.name }} is up to date: $CURRENT"
-              fi
+              echo "✓ ${{ matrix.name }} is up to date: ${{ matrix.current }}"
             fi
-          elif [[ "${{ matrix.registry }}" == "mcr" ]]; then
-            REPO="${{ matrix.repo }}"
+          else
             CURRENT_VERSIONS="${{ matrix.current_versions }}"
-            
-            # MCR API allows anonymous access to tags list
-            LATEST=$(curl -fsSL "https://mcr.microsoft.com/v2/${REPO}/tags/list" 2>/dev/null | \
-              jq -r '.tags[]?' 2>/dev/null | grep -E "$PATTERN" | sort -V | tail -1)
-            
-            if [[ -z "$LATEST" ]]; then
-              echo "::notice::Could not determine latest ${{ matrix.name }} version"
-              echo "Current versions in matrix: $CURRENT_VERSIONS"
+            IFS=',' read -ra VERSIONS <<< "$CURRENT_VERSIONS"
+            MATRIX_LATEST=$(printf '%s\n' "${VERSIONS[@]}" | sort -V | tail -1)
+            if [[ "$LATEST" != "$MATRIX_LATEST" ]]; then
+              echo "::warning::Newer ${{ matrix.name }} version available: $LATEST (latest in matrix: $MATRIX_LATEST)"
             else
-              # Find the latest version in the matrix
-              IFS=',' read -ra VERSIONS <<< "$CURRENT_VERSIONS"
-              MATRIX_LATEST=$(printf '%s\n' "${VERSIONS[@]}" | sort -V | tail -1)
-              
-              if [[ "$LATEST" != "$MATRIX_LATEST" ]]; then
-                echo "::warning::Newer ${{ matrix.name }} version available: $LATEST (latest in matrix: $MATRIX_LATEST)"
-              else
-                echo "✓ ${{ matrix.name }} is up to date: $MATRIX_LATEST"
-              fi
-              echo "Matrix includes: $CURRENT_VERSIONS"
+              echo "✓ ${{ matrix.name }} is up to date: $MATRIX_LATEST"
             fi
+            echo "Matrix includes: $CURRENT_VERSIONS"
           fi
 
   generate-metadata:
@@ -203,32 +181,15 @@ jobs:
           IMAGE="fortifydocker/fcli"
           SC_PREFIX="${BASE_VERSION}-ubi9-sc"
 
-          # Obtain Docker Hub auth token using the same credentials as for publishing.
-          # This avoids anonymous rate limits and is consistent with the publish flow.
-          DH_TOKEN=""
+          # Authenticate to Docker Hub using the same credentials as for publishing.
+          # Skopeo reads ~/.docker/config.json written by docker login, avoiding
+          # anonymous rate limits. Falls back to anonymous if credentials are absent.
           if [[ -n "$DOCKER_USERNAME" && -n "$DOCKER_PASSWORD" ]]; then
-            DH_TOKEN=$(curl -fsSL -X POST \
-              -H "Content-Type: application/json" \
-              -d "{\"username\":\"$DOCKER_USERNAME\",\"password\":\"$DOCKER_PASSWORD\"}" \
-              'https://hub.docker.com/v2/users/login' 2>/dev/null | jq -r '.token // empty' 2>/dev/null || true)
+            echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin 2>/dev/null || true
           fi
 
-          # Build curl argument array (with or without auth header)
-          CURL_ARGS=(-fsSL)
-          [[ -n "$DH_TOKEN" ]] && CURL_ARGS+=(-H "Authorization: JWT $DH_TOKEN")
-
-          # Collect all image tags from Docker Hub using pagination (capped at 5 pages = 500 tags)
-          ALL_TAGS=""
-          PAGE_URL="https://hub.docker.com/v2/repositories/${IMAGE}/tags?page_size=100"
-          MAX_PAGES=5
-          PAGE=0
-          while [[ -n "$PAGE_URL" && $PAGE -lt $MAX_PAGES ]]; do
-            RESPONSE=$(curl "${CURL_ARGS[@]}" "$PAGE_URL" 2>/dev/null || echo '{}')
-            PAGE_TAGS=$(echo "$RESPONSE" | jq -r '.results[]?.name // empty' 2>/dev/null || true)
-            ALL_TAGS="${ALL_TAGS}"$'\n'"${PAGE_TAGS}"
-            PAGE_URL=$(echo "$RESPONSE" | jq -r '.next // empty' 2>/dev/null || true)
-            PAGE=$((PAGE + 1))
-          done
+          # List all tags; skopeo handles pagination internally.
+          ALL_TAGS=$(skopeo list-tags "docker://${IMAGE}" 2>/dev/null | jq -r '.Tags[]?' 2>/dev/null || true)
 
           # Extract already-published sc-client versions from matching tags.
           # Only accept tags of the exact form "{fcliVersion}-ubi9-sc{X.Y}" (no timestamp suffix).
