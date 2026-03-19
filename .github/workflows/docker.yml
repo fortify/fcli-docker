@@ -303,7 +303,7 @@ jobs:
       IMAGE_NAME: fortifydocker/fcli
     steps:
       - name: Check-out source code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -475,7 +475,7 @@ jobs:
       DOCKER_SRC: windows
     steps:
       - name: Check-out source code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       
       - name: Build Windows image for ${{ matrix.ltsc }}
         shell: pwsh
