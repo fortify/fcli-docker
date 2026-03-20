@@ -141,7 +141,7 @@ LABEL org.opencontainers.image.source="https://github.com/fortify/fcli" \
 RUN echo "fcli:x:10001:10001:fcli:/data:/sbin/nologin" >> /etc/passwd
 COPY --from=fcli-downloader /tmp/fcli-bin/fcli /usr/bin/fcli
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-COPY welcome.txt /usr/share/fcli/welcome.txt
+COPY welcome*.txt /usr/share/fcli/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 ADD data.tgz /
 WORKDIR /data
@@ -173,7 +173,7 @@ LABEL org.opencontainers.image.source="https://github.com/fortify/fcli" \
 RUN echo "fcli:x:10001:10001:fcli:/data:/sbin/nologin" >> /etc/passwd
 COPY --from=fcli-downloader /tmp/fcli-bin/fcli /usr/bin/fcli
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-COPY welcome.txt /usr/share/fcli/welcome.txt
+COPY welcome*.txt /usr/share/fcli/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 ADD data.tgz /
 WORKDIR /data

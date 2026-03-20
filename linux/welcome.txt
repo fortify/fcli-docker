@@ -23,4 +23,14 @@ Note: fcli stores session state and cache in /data (FCLI_USER_HOME).
       For persistent state across image invocations, mount a volume: 
         docker run -v fcli-data:/data ...
 
+Note: This image does not include any build tools, and is therefore not 
+      suitable for for packaging source code through ScanCentral Client
+      for languages that require build tool integration. If the 
+      `scancentral package` command is being run within this container
+      (for example through fcli `ci` or `package` actions or direct 
+      ScanCentral Client invocation), the `-bt none` option must be
+      passed to avoid errors due to missing build tools. Depending on
+      source code language, using `-bt none` may produce inaccurate
+      scan results.
+${EXTRA_NOTES}
 ════════════════════════════════════════════════════════════════════════════════

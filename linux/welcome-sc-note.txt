@@ -1,0 +1,4 @@
+Note: This image variant also includes ScanCentral Client, which can be
+      invoked via the `scancentral` command. See `scancentral --help` or
+      the product documentation for details. Please also see note above
+      about packaging.
