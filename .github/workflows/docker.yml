@@ -120,6 +120,7 @@ jobs:
       timestamp: ${{ steps.meta.outputs.timestamp }}
       is_semantic: ${{ steps.meta.outputs.is_semantic }}
       release_updated_at: ${{ steps.meta.outputs.release_updated_at }}
+      image_name: ${{ steps.image.outputs.image_name }}
     steps:
       - name: Extract metadata
         id: meta
@@ -157,8 +158,18 @@ jobs:
             echo "Non-semantic version: ${VERSION} (no timestamp or semantic tags)"
           fi
 
+      - name: Determine target image name
+        id: image
+        run: |
+          if [[ "${{ inputs.releaseTag }}" == dev_* ]]; then
+            echo "image_name=fortifydocker/fcli-dev" >> $GITHUB_OUTPUT
+          else
+            echo "image_name=fortifydocker/fcli" >> $GITHUB_OUTPUT
+          fi
+
   generate-linux-matrix:
     name: Generate Linux Matrix
+    needs: [generate-metadata]
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
@@ -178,7 +189,7 @@ jobs:
 
           BASE_VERSION="${{ inputs.releaseTag }}"
           BASE_VERSION="${BASE_VERSION#v}"
-          IMAGE="fortifydocker/fcli"
+          IMAGE="${{ needs.generate-metadata.outputs.image_name }}"
           SC_PREFIX="${BASE_VERSION}-ubi9-sc"
 
           # Authenticate to Docker Hub using the same credentials as for publishing.
@@ -300,7 +311,7 @@ jobs:
     env:
       DOCKER_SRC: linux
       REGISTRY: docker.io
-      IMAGE_NAME: fortifydocker/fcli
+      IMAGE_NAME: ${{ needs.generate-metadata.outputs.image_name }}
     steps:
       - name: Check-out source code
         uses: actions/checkout@v6
