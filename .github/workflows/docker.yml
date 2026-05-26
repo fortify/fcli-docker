@@ -121,6 +121,8 @@ jobs:
       is_semantic: ${{ steps.meta.outputs.is_semantic }}
       release_updated_at: ${{ steps.meta.outputs.release_updated_at }}
       image_name: ${{ steps.image.outputs.image_name }}
+      publish_major_tag: ${{ steps.rolling.outputs.publish_major_tag }}
+      publish_minor_tag: ${{ steps.rolling.outputs.publish_minor_tag }}
     steps:
       - name: Extract metadata
         id: meta
@@ -165,6 +167,80 @@ jobs:
             echo "image_name=fortifydocker/fcli-dev" >> $GITHUB_OUTPUT
           else
             echo "image_name=fortifydocker/fcli" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check whether rolling semantic tags should be published
+        id: rolling
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+        run: |
+          # Rolling tags (X and X.Y) must only be updated when the version being
+          # published is the highest patch release known for that series.
+          # This prevents a refresh of an older release from overwriting a rolling
+          # tag that already points at a newer release.
+
+          if [[ "${{ steps.meta.outputs.is_semantic }}" != "true" ]]; then
+            echo "publish_major_tag=false" >> $GITHUB_OUTPUT
+            echo "publish_minor_tag=false" >> $GITHUB_OUTPUT
+            echo "Non-semantic version; rolling tags not applicable"
+            exit 0
+          fi
+
+          IMAGE="${{ steps.image.outputs.image_name }}"
+          MAJOR="${{ steps.meta.outputs.major }}"
+          MINOR="${{ steps.meta.outputs.minor }}"
+          VERSION="${{ steps.meta.outputs.version }}"
+
+          # Authenticate to avoid anonymous rate limits (optional).
+          if [[ -n "$DOCKER_USERNAME" && -n "$DOCKER_PASSWORD" ]]; then
+            echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin 2>/dev/null || true
+          fi
+
+          # Fetch all published tags; skopeo handles pagination internally.
+          ALL_TAGS=$(skopeo list-tags "docker://${IMAGE}" 2>/dev/null | jq -r '.Tags[]?' 2>/dev/null || echo "")
+
+          if [[ -z "$ALL_TAGS" ]]; then
+            # Image doesn't exist yet or the registry is unreachable – publish both.
+            echo "No existing tags found for ${IMAGE}; defaulting to publishing rolling tags"
+            echo "publish_major_tag=true" >> $GITHUB_OUTPUT
+            echo "publish_minor_tag=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Find the highest published patch version for this major.minor series.
+          HIGHEST_MINOR=$(echo "$ALL_TAGS" | grep -E "^${MAJOR}\.${MINOR}\.[0-9]+$" | sort -V | tail -1)
+          # Find the highest published patch version for this major series.
+          HIGHEST_MAJOR=$(echo "$ALL_TAGS" | grep -E "^${MAJOR}\.[0-9]+\.[0-9]+$" | sort -V | tail -1)
+
+          # Publish the X.Y rolling tag only when current version >= highest known X.Y.* version.
+          if [[ -z "$HIGHEST_MINOR" ]]; then
+            echo "No existing ${MAJOR}.${MINOR}.* tags; will publish ${MAJOR}.${MINOR} rolling tag"
+            echo "publish_minor_tag=true" >> $GITHUB_OUTPUT
+          else
+            HIGHER=$(printf '%s\n%s\n' "$HIGHEST_MINOR" "$VERSION" | sort -V | tail -1)
+            if [[ "$HIGHER" == "$VERSION" ]]; then
+              echo "Current ${VERSION} >= highest ${MAJOR}.${MINOR}.* (${HIGHEST_MINOR}); will publish ${MAJOR}.${MINOR} rolling tag"
+              echo "publish_minor_tag=true" >> $GITHUB_OUTPUT
+            else
+              echo "Current ${VERSION} < highest ${MAJOR}.${MINOR}.* (${HIGHEST_MINOR}); skipping ${MAJOR}.${MINOR} rolling tag"
+              echo "publish_minor_tag=false" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+          # Publish the X rolling tag only when current version >= highest known X.*.* version.
+          if [[ -z "$HIGHEST_MAJOR" ]]; then
+            echo "No existing ${MAJOR}.*.* tags; will publish ${MAJOR} rolling tag"
+            echo "publish_major_tag=true" >> $GITHUB_OUTPUT
+          else
+            HIGHER=$(printf '%s\n%s\n' "$HIGHEST_MAJOR" "$VERSION" | sort -V | tail -1)
+            if [[ "$HIGHER" == "$VERSION" ]]; then
+              echo "Current ${VERSION} >= highest ${MAJOR}.*.* (${HIGHEST_MAJOR}); will publish ${MAJOR} rolling tag"
+              echo "publish_major_tag=true" >> $GITHUB_OUTPUT
+            else
+              echo "Current ${VERSION} < highest ${MAJOR}.*.* (${HIGHEST_MAJOR}); skipping ${MAJOR} rolling tag"
+              echo "publish_major_tag=false" >> $GITHUB_OUTPUT
+            fi
           fi
 
   generate-linux-matrix:
@@ -343,11 +419,22 @@ jobs:
             MAJOR="${{ needs.generate-metadata.outputs.major }}"
             MINOR="${{ needs.generate-metadata.outputs.minor }}"
             
-            # Tags: x.y.z-suffix-timestamp, x.y.z-suffix, x.y-suffix, x-suffix
+            # Tags: x.y.z-suffix-timestamp, x.y.z-suffix
             TAGS="${{ env.IMAGE_NAME }}:${VERSION}${SUFFIX}-${TIMESTAMP}"
             TAGS="${TAGS},${{ env.IMAGE_NAME }}:${VERSION}${SUFFIX}"
-            TAGS="${TAGS},${{ env.IMAGE_NAME }}:${MAJOR}.${MINOR}${SUFFIX}"
-            TAGS="${TAGS},${{ env.IMAGE_NAME }}:${MAJOR}${SUFFIX}"
+            
+            # Add x.y-suffix rolling tag only when this version is the highest
+            # known patch release for its major.minor series (avoids overwriting
+            # a newer release's rolling tag during a refresh of an older release).
+            if [[ "${{ needs.generate-metadata.outputs.publish_minor_tag }}" == "true" ]]; then
+              TAGS="${TAGS},${{ env.IMAGE_NAME }}:${MAJOR}.${MINOR}${SUFFIX}"
+            fi
+            
+            # Add x-suffix rolling tag only when this version is the highest
+            # known patch release for its major series.
+            if [[ "${{ needs.generate-metadata.outputs.publish_major_tag }}" == "true" ]]; then
+              TAGS="${TAGS},${{ env.IMAGE_NAME }}:${MAJOR}${SUFFIX}"
+            fi
             
             # Add 'latest' tag if explicitly requested (not for sc-client variants)
             if [[ "${{ inputs.isLatest }}" == "true" && -z "${{ matrix.variant.sc_client_version }}" ]]; then
