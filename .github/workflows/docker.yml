@@ -198,11 +198,9 @@ jobs:
           fi
 
           # Fetch all published tags; skopeo handles pagination internally.
-          ALL_TAGS=$(skopeo list-tags "docker://${IMAGE}" 2>/dev/null | jq -r '.Tags[]?' 2>/dev/null || echo "")
-
+          ALL_TAGS=$(skopeo list-tags "docker://${IMAGE}" 2>/dev/null | jq -r '.Tags[]?' 2>/dev/null || true)
           if [[ -z "$ALL_TAGS" ]]; then
-            # Image doesn't exist yet or the registry is unreachable – publish both.
-            echo "No existing tags found for ${IMAGE}; defaulting to publishing rolling tags"
+            echo "::warning::Could not fetch tags for ${IMAGE} (registry unreachable or image not yet published); defaulting to publishing rolling tags"
             echo "publish_major_tag=true" >> $GITHUB_OUTPUT
             echo "publish_minor_tag=true" >> $GITHUB_OUTPUT
             exit 0
@@ -218,8 +216,8 @@ jobs:
             echo "No existing ${MAJOR}.${MINOR}.* tags; will publish ${MAJOR}.${MINOR} rolling tag"
             echo "publish_minor_tag=true" >> $GITHUB_OUTPUT
           else
-            HIGHER=$(printf '%s\n%s\n' "$HIGHEST_MINOR" "$VERSION" | sort -V | tail -1)
-            if [[ "$HIGHER" == "$VERSION" ]]; then
+            HIGHER_MINOR=$(printf '%s\n%s\n' "$HIGHEST_MINOR" "$VERSION" | sort -V | tail -1)
+            if [[ "$HIGHER_MINOR" == "$VERSION" ]]; then
               echo "Current ${VERSION} >= highest ${MAJOR}.${MINOR}.* (${HIGHEST_MINOR}); will publish ${MAJOR}.${MINOR} rolling tag"
               echo "publish_minor_tag=true" >> $GITHUB_OUTPUT
             else
@@ -233,8 +231,8 @@ jobs:
             echo "No existing ${MAJOR}.*.* tags; will publish ${MAJOR} rolling tag"
             echo "publish_major_tag=true" >> $GITHUB_OUTPUT
           else
-            HIGHER=$(printf '%s\n%s\n' "$HIGHEST_MAJOR" "$VERSION" | sort -V | tail -1)
-            if [[ "$HIGHER" == "$VERSION" ]]; then
+            HIGHER_MAJOR=$(printf '%s\n%s\n' "$HIGHEST_MAJOR" "$VERSION" | sort -V | tail -1)
+            if [[ "$HIGHER_MAJOR" == "$VERSION" ]]; then
               echo "Current ${VERSION} >= highest ${MAJOR}.*.* (${HIGHEST_MAJOR}); will publish ${MAJOR} rolling tag"
               echo "publish_major_tag=true" >> $GITHUB_OUTPUT
             else
