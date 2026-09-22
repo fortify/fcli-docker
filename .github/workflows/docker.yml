@@ -314,17 +314,17 @@ jobs:
       IMAGE_NAME: ${{ needs.generate-metadata.outputs.image_name }}
     steps:
       - name: Check-out source code
-        uses: fortify/shared-github/actions/3rdparty/actions/checkout/v6@d9552c48d8270d8e320ff2ab4d356c8a69356686
+        uses: fortify/shared-github/actions/3rdparty/actions/checkout/v6@f770891b6964394472880428517a4b5c7cd57740
       
       - name: Set up Docker Buildx
-        uses: fortify/shared-github/actions/3rdparty/docker/setup-buildx-action/v3@d9552c48d8270d8e320ff2ab4d356c8a69356686
+        uses: fortify/shared-github/actions/3rdparty/docker/setup-buildx-action/v3@f770891b6964394472880428517a4b5c7cd57740
         with:
           driver-opts: |
             image=moby/buildkit:latest
       
       - name: Docker Login
         if: ${{ inputs.doPublish }}
-        uses: fortify/shared-github/actions/3rdparty/docker/login-action/v3@d9552c48d8270d8e320ff2ab4d356c8a69356686
+        uses: fortify/shared-github/actions/3rdparty/docker/login-action/v3@f770891b6964394472880428517a4b5c7cd57740
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ secrets.DOCKER_USERNAME }}
@@ -362,7 +362,7 @@ jobs:
           echo "Generated tags for ${{ matrix.variant.name }}: ${TAGS}"
       
       - name: Build and push ${{ matrix.variant.name }}
-        uses: fortify/shared-github/actions/3rdparty/docker/build-push-action/v6@d9552c48d8270d8e320ff2ab4d356c8a69356686
+        uses: fortify/shared-github/actions/3rdparty/docker/build-push-action/v6@f770891b6964394472880428517a4b5c7cd57740
         with:
           context: ${{ env.DOCKER_SRC }}
           file: ${{ env.DOCKER_SRC }}/Dockerfile
@@ -486,7 +486,7 @@ jobs:
       DOCKER_SRC: windows
     steps:
       - name: Check-out source code
-        uses: fortify/shared-github/actions/3rdparty/actions/checkout/v6@d9552c48d8270d8e320ff2ab4d356c8a69356686
+        uses: fortify/shared-github/actions/3rdparty/actions/checkout/v6@f770891b6964394472880428517a4b5c7cd57740
       
       - name: Build Windows image for ${{ matrix.ltsc }}
         shell: pwsh
