@@ -14,5 +14,5 @@ permissions:
 
 jobs:
   FoD-Scan:
-    uses: fortify/.github/.github/workflows/fortify-analysis.yml@main
+    uses: fortify/shared-github/.github/workflows/reusable-fortify-analysis.yml@d9552c48d8270d8e320ff2ab4d356c8a69356686
     secrets: inherit
