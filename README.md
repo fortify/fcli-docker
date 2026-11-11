@@ -104,6 +104,25 @@ UBI9+ScanCentral Client tags carry a `-ubi9-sc{scVersion}` suffix.
 > built. Timestamped tags are immutable; the floating `{version}` and `{major}.{minor}` tags
 > are updated when images are refreshed (e.g., for base-image CVE fixes).
 
+### linux/arm64 Images
+
+All of the tags listed above refer to linux/amd64 images. For fcli releases that provide a
+linux/arm64 binary (`fcli-linux-arm64.tgz`), the UBI9 and UBI9+ScanCentral Client images are
+also published as separate linux/arm64 images, using the same tag patterns with an additional
+`-arm64` suffix:
+
+| Tag pattern | Example |
+|---|---|
+| `latest-ubi9-arm64` | `fortifydocker/fcli:latest-ubi9-arm64` |
+| `{version}-ubi9-arm64` | `fortifydocker/fcli:3.30.0-ubi9-arm64` |
+| `{major}.{minor}-ubi9-arm64`, `{major}-ubi9-arm64` | `fortifydocker/fcli:3-ubi9-arm64` |
+| `{version}-ubi9-sc{scVersion}-arm64` | `fortifydocker/fcli:3.30.0-ubi9-sc25.4-arm64` |
+| `{major}.{minor}-ubi9-sc{scVersion}-arm64`, `{major}-ubi9-sc{scVersion}-arm64` | `fortifydocker/fcli:3-ubi9-sc25.4-arm64` |
+| `{version}-ubi9-arm64-{timestamp}`, `{version}-ubi9-sc{scVersion}-arm64-{timestamp}` | `fortifydocker/fcli:3.30.0-ubi9-arm64-20260319120000` |
+
+No linux/arm64 scratch image is published, as the linux/arm64 fcli binary is dynamically linked
+against glibc (2.34 or later) rather than being fully static.
+
 ## Building Locally
 
 ### Prerequisites
@@ -133,6 +152,14 @@ docker build . \
   --build-arg SC_CLIENT_VERSION=25.4 \
   --target fcli-ubi9-sc \
   -t fcli:ubi9-sc25.4
+
+# Build linux/arm64 UBI9 image (requires an fcli release that provides fcli-linux-arm64.tgz;
+# the fcli-scratch and fcli-alpine targets only support linux/amd64)
+docker build . \
+  --platform linux/arm64 \
+  --build-arg FCLI_VERSION=v3.30.0 \
+  --target fcli-ubi9 \
+  -t fcli:ubi9-arm64
 
 # Build Alpine image
 docker build . \

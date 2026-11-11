@@ -15,6 +15,11 @@
 # - fcli-ubi9: UBI9-based image providing a shell environment for running multiple fcli commands
 # - fcli-ubi9-sc<version>: UBI9-based image with ScanCentral Client pre-installed (embedded JRE)
 #
+# All of these are published for linux/amd64. The fcli-ubi9 and fcli-ubi9-sc<version> images are
+# also published for linux/arm64 as separate images, with an '-arm64' tag suffix. As the
+# linux/arm64 fcli binary is dynamically linked against glibc, the fcli-scratch and fcli-alpine
+# targets only support linux/amd64.
+#
 # The scratch image has minimal attack surface, while the UBI9 image provides a shell-based
 # environment for running multiple fcli commands in sequence. The fcli-ubi9-sc variants extend
 # fcli-ubi9 with a pre-installed ScanCentral Client (including an embedded JRE), so users can
@@ -87,9 +92,11 @@ RUN mkdir -p /tmp/keys && \
     echo "-----END PUBLIC KEY-----" >> /tmp/keys/fortify.pub
 
 # Determine platform-specific archive name
+# Note: unlike the fully static linux/amd64 binary, the linux/arm64 binary requires glibc 2.34+,
+# so on arm64 it only runs on glibc-based targets like fcli-ubi9, not fcli-scratch or fcli-alpine.
 RUN case "$TARGETPLATFORM" in \
       "linux/amd64") ARCHIVE="fcli-linux.tgz" ;; \
-      "linux/arm64") ARCHIVE="fcli-linux.tgz" ;; \
+      "linux/arm64") ARCHIVE="fcli-linux-arm64.tgz" ;; \
       *) echo "Unsupported platform: $TARGETPLATFORM" && exit 1 ;; \
     esac && \
     echo "$ARCHIVE" > /tmp/archive_name
@@ -112,12 +119,22 @@ RUN ARCHIVE=$(cat /tmp/archive_name) && \
       -signature "/tmp/${ARCHIVE}.rsa_sha256" "/tmp/${ARCHIVE}" && \
     echo "✓ Signature verification successful"
 
-# Extract fcli binary
+# Extract fcli binary; the glibc-based linux/arm64 binary can't be run in this Alpine-based stage
 RUN ARCHIVE=$(cat /tmp/archive_name) && \
     mkdir -p /tmp/fcli-bin && \
     tar -xzf "/tmp/${ARCHIVE}" -C /tmp/fcli-bin && \
     chmod +x /tmp/fcli-bin/fcli && \
-    /tmp/fcli-bin/fcli --version
+    if [ "$TARGETPLATFORM" = "linux/amd64" ]; then /tmp/fcli-bin/fcli --version; fi
+
+# ============================================================================
+# Stage: fcli-static-downloader
+# Used by targets that require the fully static fcli binary (fcli-alpine,
+# fcli-scratch), which is only available for linux/amd64
+# ============================================================================
+FROM fcli-downloader AS fcli-static-downloader
+ARG TARGETPLATFORM
+RUN test "$TARGETPLATFORM" = "linux/amd64" || \
+    (echo "ERROR: This target requires the static linux/amd64 fcli binary; $TARGETPLATFORM is not supported" && exit 1)
 
 # ============================================================================
 # Stage: fcli-alpine
@@ -139,7 +156,7 @@ LABEL org.opencontainers.image.source="https://github.com/fortify/fcli" \
       com.fortify.base.image="${ALPINE_BASE}"
 
 RUN echo "fcli:x:10001:10001:fcli:/data:/sbin/nologin" >> /etc/passwd
-COPY --from=fcli-downloader /tmp/fcli-bin/fcli /usr/bin/fcli
+COPY --from=fcli-static-downloader /tmp/fcli-bin/fcli /usr/bin/fcli
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 COPY welcome*.txt /usr/share/fcli/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
@@ -229,7 +246,7 @@ LABEL org.opencontainers.image.source="https://github.com/fortify/fcli" \
       com.fortify.base.image="scratch"
 
 ADD minimal-passwd /etc/passwd
-COPY --from=fcli-downloader /tmp/fcli-bin/fcli /usr/bin/fcli
+COPY --from=fcli-static-downloader /tmp/fcli-bin/fcli /usr/bin/fcli
 ADD tmp.tgz /
 ADD data.tgz /
 WORKDIR /data

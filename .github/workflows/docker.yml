@@ -17,7 +17,7 @@ on:
         type: boolean
         default: false
       buildProduction:
-        description: 'Build production images (scratch, ubi9, ubi9-sc variants)'
+        description: 'Build production images (scratch, ubi9, ubi9-sc variants; ubi9 and ubi9-sc also for arm64 if the fcli release provides a linux/arm64 binary)'
         required: false
         type: boolean
         default: true
@@ -120,6 +120,7 @@ jobs:
       timestamp: ${{ steps.meta.outputs.timestamp }}
       is_semantic: ${{ steps.meta.outputs.is_semantic }}
       release_updated_at: ${{ steps.meta.outputs.release_updated_at }}
+      has_linux_arm64: ${{ steps.meta.outputs.has_linux_arm64 }}
       image_name: ${{ steps.image.outputs.image_name }}
     steps:
       - name: Extract metadata
@@ -136,6 +137,11 @@ jobs:
           RELEASE_UPDATED_AT=$(echo "$RELEASE_DATA" | jq -r '.published_at // .created_at // ""')
           echo "release_updated_at=${RELEASE_UPDATED_AT}" >> $GITHUB_OUTPUT
           echo "Release updated at: ${RELEASE_UPDATED_AT}"
+
+          # Only fcli releases that provide a linux/arm64 binary can produce arm64 images
+          HAS_LINUX_ARM64=$(echo "$RELEASE_DATA" | jq -r 'any(.assets[]?; .name == "fcli-linux-arm64.tgz")')
+          echo "has_linux_arm64=${HAS_LINUX_ARM64}" >> $GITHUB_OUTPUT
+          echo "Release has linux/arm64 binary: ${HAS_LINUX_ARM64}"
           
           # Try to parse semantic version components (x.y.z)
           if [[ "$VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
@@ -282,12 +288,28 @@ jobs:
                   '. + [{"name":("ubi9-sc"+$scv),"target":"fcli-ubi9-sc","suffix":("-ubi9-sc"+$scv),"latest_suffix":"","sc_client_version":$scv,"base_image":("fcli-ubi9 + sc-client "+$scv),"publish":true}]')
               done < <(echo "$SC_VERSIONS" | jq -r '.[]')
             fi
+
+            # Add separate (non-multi-arch) arm64 images for the glibc-based ubi9 and ubi9-sc variants,
+            # tagged with an additional '-arm64' suffix. The arm64 fcli binary requires glibc, so no
+            # arm64 scratch image is published.
+            if [[ "${{ needs.generate-metadata.outputs.has_linux_arm64 }}" == "true" ]]; then
+              VARIANTS=$(echo "$VARIANTS" | jq -c '. + [.[]
+                | select(.target == "fcli-ubi9" or .target == "fcli-ubi9-sc")
+                | .name += "-arm64" | .suffix += "-arm64"
+                | .latest_suffix |= (if . == "" then "" else . + "-arm64" end)
+                | .platform = "linux/arm64" | .runner = "ubuntu-24.04-arm"]')
+            else
+              echo "::notice::fcli ${{ inputs.releaseTag }} doesn't provide fcli-linux-arm64.tgz; skipping arm64 images"
+            fi
           fi
 
           # Add test variants if enabled
           if [[ "${{ inputs.buildTest }}" == "true" ]]; then
             VARIANTS=$(echo "$VARIANTS" | jq -c --arg base "${{ inputs.alpineBase }}" '. + [{"name":"alpine","target":"fcli-alpine","suffix":"-alpine","latest_suffix":"-alpine","sc_client_version":"","base_image":$base,"publish":false}]')
           fi
+
+          # Variants that don't explicitly specify platform and runner are built for linux/amd64
+          VARIANTS=$(echo "$VARIANTS" | jq -c 'map({"platform":"linux/amd64","runner":"ubuntu-latest"} + .)')
 
           # Check if we have any variants to build
           VARIANT_COUNT=$(echo "$VARIANTS" | jq 'length')
@@ -305,9 +327,11 @@ jobs:
     name: Build & Test Linux (${{ matrix.variant.name }})
     needs: [generate-metadata, generate-linux-matrix]
     if: ${{ needs.generate-linux-matrix.outputs.has_variants == 'true' }}
-    runs-on: ubuntu-latest
+    # Images are built natively on a runner matching the target platform (no QEMU emulation)
+    runs-on: ${{ matrix.variant.runner }}
     strategy:
       matrix: ${{ fromJson(needs.generate-linux-matrix.outputs.matrix) }}
+      fail-fast: false
     env:
       DOCKER_SRC: linux
       REGISTRY: docker.io
@@ -367,7 +391,7 @@ jobs:
           context: ${{ env.DOCKER_SRC }}
           file: ${{ env.DOCKER_SRC }}/Dockerfile
           target: ${{ matrix.variant.target }}
-          platforms: linux/amd64
+          platforms: ${{ matrix.variant.platform }}
           push: ${{ matrix.variant.publish && inputs.doPublish }}
           tags: ${{ steps.tags.outputs.tags }}
           labels: |
@@ -431,6 +455,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **Base Image:** \`${{ matrix.variant.base_image }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Target:** \`${{ matrix.variant.target }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Platform:** \`${{ matrix.variant.platform }}\`" >> $GITHUB_STEP_SUMMARY
           if [[ -n "${{ matrix.variant.sc_client_version }}" ]]; then
             echo "- **ScanCentral Client:** \`${{ matrix.variant.sc_client_version }}\` (pre-installed with embedded JRE)" >> $GITHUB_STEP_SUMMARY
           fi
