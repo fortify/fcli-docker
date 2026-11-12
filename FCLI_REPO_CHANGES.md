@@ -95,7 +95,7 @@ Add a new job at the end of the workflow to trigger the Docker build:
                 releaseTag: tag,
                 doPublish: 'true',
                 alpineBase: 'alpine:3.23.0',
-                ubiBase: 'redhat/ubi9:9.7',
+                ubiBase: 'redhat/ubi9:9.9',
                 servercoreBase: 'mcr.microsoft.com/windows/servercore:ltsc2022',
                 updateBaseImages: 'false'
               }

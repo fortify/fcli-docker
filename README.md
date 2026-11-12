@@ -171,7 +171,7 @@ docker build . \
 docker build . \
   --build-arg FCLI_VERSION=v3.15.0 \
   --build-arg ALPINE_BASE=alpine:3.23.0 \
-  --build-arg UBI_BASE=redhat/ubi9:9.7 \
+  --build-arg UBI_BASE=redhat/ubi9:9.9 \
   --target fcli-scratch \
   -t fcli:scratch
 ```
@@ -409,7 +409,7 @@ docker inspect fortifydocker/fcli:latest | jq '.[0].Config.Labels'
 |----------|----------|---------|-------------|
 | `FCLI_VERSION` | Yes | - | fcli release tag (e.g., `v3.15.0`) |
 | `ALPINE_BASE` | No | `alpine:3.23.0` | Alpine base image for downloader and alpine target |
-| `UBI_BASE` | No | `redhat/ubi9:9.7` | Red Hat UBI9 standard base image (not minimal) |
+| `UBI_BASE` | No | `redhat/ubi9:9.9` | Red Hat UBI9 standard base image (not minimal) |
 | `SC_CLIENT_VERSION` | Required for `fcli-ubi9-sc` target | - | ScanCentral Client version to pre-install (e.g., `25.4`); resolved to latest patch release at build time |
 
 ### Windows Dockerfile
@@ -443,7 +443,7 @@ The `.github/workflows/docker.yml` workflow provides:
 gh workflow run docker.yml \
   -f releaseTag=v3.15.0 \
   -f doPublish=true \
-  -f ubiBase=redhat/ubi9:9.7
+  -f ubiBase=redhat/ubi9:9.9
 
 # Refresh existing images only (sc-client versions auto-detected from published tags)
 gh workflow run docker.yml \
@@ -472,7 +472,7 @@ Base images should be updated periodically for security patches:
    docker build . \
      --build-arg FCLI_VERSION=v3.14.0 \
      --build-arg ALPINE_BASE=alpine:3.23.0 \
-     --build-arg UBI_BASE=redhat/ubi9:9.7 \
+     --build-arg UBI_BASE=redhat/ubi9:9.9 \
      --target fcli-scratch
    ```
 
@@ -483,7 +483,7 @@ Base images should be updated periodically for security patches:
    gh workflow run docker.yml \
      -f releaseTag=v3.15.0 \
      -f doPublish=true \
-     -f ubiBase=redhat/ubi9:9.8
+     -f ubiBase=redhat/ubi9:9.9
    ```
    This creates new immutable timestamped tags (e.g., `3.15.0-20260401120000`,
    `3.15.0-ubi9-20260401120000`, `3.15.0-ubi9-sc25.4-20260401120000`) while also

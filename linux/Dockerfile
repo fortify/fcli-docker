@@ -39,7 +39,7 @@
 # Build Arguments:
 # - FCLI_VERSION:       fcli version to download (required, e.g., "v3.14.0")
 # - ALPINE_BASE:        Alpine base image (default: alpine:3.23.0)
-# - UBI_BASE:           Red Hat UBI base image (default: redhat/ubi9:9.7)
+# - UBI_BASE:           Red Hat UBI base image (default: redhat/ubi9:9.9)
 # - SC_CLIENT_VERSION:  ScanCentral Client version to install (required for fcli-ubi9-sc target)
 #
 # All of the targets defined below have more or less the same structure:
@@ -60,7 +60,7 @@
 # Global build arguments (must be before any FROM to use in FROM statements)
 # ============================================================================
 ARG ALPINE_BASE=alpine:3.23.0
-ARG UBI_BASE=redhat/ubi9:9.7
+ARG UBI_BASE=redhat/ubi9:9.9
 
 # ============================================================================
 # Stage: fcli-downloader
