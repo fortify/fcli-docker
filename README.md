@@ -427,14 +427,16 @@ The `.github/workflows/docker.yml` workflow provides:
 - **Automated builds:** Triggered via workflow_dispatch
 - **Multi-image support:** Builds scratch, UBI9, UBI9+ScanCentral Client (multiple sc-client versions), Alpine (test), and Windows (test)
 - **Signature verification:** Built into Dockerfile
-- **Automated testing:** Tests tool installation in each image; verifies pre-installed sc-client and env vars in ubi9-sc variants
+- **Automated testing:** Tests tool installation in each image; verifies pre-installed sc-client, env vars and embedded Java execution in ubi9-sc variants
 - **SBOM generation:** Provenance and SBOM attestation
-- **Base image updates:** Support for republishing with updated base images
+- **Base image updates:** Every build pulls the current image for the selected base tag, so republishing an existing fcli version picks up refreshed base image contents
 - **Selective publishing:** Publishes scratch, UBI9 and UBI9+sc-client variants to Docker Hub
 - **Automatic sc-client version detection:**
   - First publish: bootstraps by picking the two latest YY.Q release groups from the [tool definitions](https://github.com/fortify/tool-definitions)
-  - Subsequent refreshes: detects already-published sc-client versions from existing Docker Hub tags and refreshes those
+  - Subsequent refreshes: detects already-published sc-client versions from existing Docker Hub tags and refreshes those; releases that were published without ubi9-sc images don't get any added
   - Additional sc-client versions can be specified explicitly via the `scClientVersions` input
+- **Fresh embedded JREs:** The ScanCentral Client installation stage bypasses the build cache and forces a tool definitions update, failing the build if that update fails. The embedded Java runtime is executed as the image user during the build, and its version is shown in the workflow summary.
+- **Rolling tags:** The `x.y`, `x` and `latest` tags are only updated if no newer `x.y.z` release has been published for the same image variant, so republishing an older fcli version doesn't move these tags away from a newer release
 
 ### Triggering Builds
 
@@ -487,7 +489,15 @@ Base images should be updated periodically for security patches:
    ```
    This creates new immutable timestamped tags (e.g., `3.15.0-20260401120000`,
    `3.15.0-ubi9-20260401120000`, `3.15.0-ubi9-sc25.4-20260401120000`) while also
-   updating the floating `3.15.0`, `3.15`, and `3` tags to the refreshed images.
+   updating the floating `3.15.0` tag, and the `3.15` and `3` tags unless they belong to a newer
+   release, to the refreshed images. Pass `-f isLatest=true` when republishing the latest release
+   to also update the `latest` tags.
+
+   For JRE security updates, check the embedded Java version in the workflow summary or image
+   SBOM against the advisory, as patched JRE builds may not be available for all platforms yet.
+   Existing timestamped tags and digest references keep pointing to the old images. For local
+   builds, use `docker buildx build --no-cache-filter fcli-ubi9-sc ...` to reinstall
+   ScanCentral Client with the latest JRE.
 
 ### Testing Checklist
 

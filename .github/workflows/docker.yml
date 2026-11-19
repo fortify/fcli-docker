@@ -56,6 +56,10 @@ on:
 permissions:
   contents: read
   packages: write
+
+concurrency:
+  group: fcli-docker-${{ inputs.releaseTag }}
+  cancel-in-progress: false
   
 jobs:
   check-base-images:
@@ -205,15 +209,21 @@ jobs:
             echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin 2>/dev/null || true
           fi
 
-          # List all tags; skopeo handles pagination internally.
-          ALL_TAGS=$(skopeo list-tags "docker://${IMAGE}" 2>/dev/null | jq -r '.Tags[]?' 2>/dev/null || true)
+          # List all tags; skopeo handles pagination internally. Fail if tags can't be listed, as
+          # sc-client version detection and rolling tag updates depend on the published tags.
+          TAGS_JSON=$(skopeo list-tags "docker://${IMAGE}")
+          ALL_TAGS=$(echo "$TAGS_JSON" | jq -r '.Tags[]')
+          echo "$ALL_TAGS" > "$RUNNER_TEMP/published-tags.txt"
 
           # Extract already-published sc-client versions from matching tags.
           # Only accept tags of the exact form "{fcliVersion}-ubi9-sc{X.Y}" (no timestamp suffix).
-          EXISTING_VERSIONS=$(echo "$ALL_TAGS" | \
-            grep -E "^${SC_PREFIX}[0-9]+\.[0-9]+$" | \
-            sed "s/^${SC_PREFIX}//" | \
-            sort -uV || true)
+          EXISTING_VERSIONS=$(echo "$ALL_TAGS" | jq -Rr --arg prefix "$SC_PREFIX" \
+            'select(startswith($prefix)) | ltrimstr($prefix) | select(test("^[0-9]+\\.[0-9]+$"))' | \
+            sort -uV)
+
+          # Releases published before ubi9-sc images were introduced already have scratch/ubi9 images
+          RELEASE_PUBLISHED=$(echo "$ALL_TAGS" | jq -Rn --arg version "$BASE_VERSION" \
+            '[inputs] | any(. == $version or . == ($version + "-ubi9"))')
 
           # Normalise explicit input versions (trim whitespace, drop blanks)
           INPUT_VERSIONS=""
@@ -225,7 +235,10 @@ jobs:
           # Decision tree:
           #  A) input given              → merge input + existing
           #  B) no input, existing found → refresh existing only
-          #  C) no input, no existing    → bootstrap: parse tool-definitions YAML,
+          #  C) no input, no existing, release already published
+          #                              → no sc-client images
+          #  D) no input, no existing, release not yet published
+          #                              → bootstrap: parse tool-definitions YAML,
           #                                take the last 2 YY.Q release groups
           if [[ -n "$INPUT_VERSIONS" ]]; then
             # A: merge
@@ -238,8 +251,13 @@ jobs:
             SC_VERSIONS="$EXISTING_VERSIONS"
             echo "Refreshing existing sc-client versions: $(echo $SC_VERSIONS | tr '\n' ' ')"
 
+          elif [[ "$RELEASE_PUBLISHED" == "true" ]]; then
+            # C: refresh without adding sc-client images
+            SC_VERSIONS=""
+            echo "Release was published without sc-client images; not adding any"
+
           else
-            # C: bootstrap — fetch tool definitions and pick 2 latest YY.Q groups
+            # D: bootstrap — fetch tool definitions and pick 2 latest YY.Q groups
             echo "No existing sc-client images found; bootstrapping from tool definitions..."
             TOOL_DEF_URL="https://raw.githubusercontent.com/fortify/tool-definitions/refs/heads/main/v1/sc-client.yaml"
             SC_YAML=$(curl -fsSL "$TOOL_DEF_URL" 2>/dev/null || echo "")
@@ -311,6 +329,32 @@ jobs:
           # Variants that don't explicitly specify platform and runner are built for linux/amd64
           VARIANTS=$(echo "$VARIANTS" | jq -c 'map({"platform":"linux/amd64","runner":"ubuntu-latest"} + .)')
 
+          # Rolling x.y, x and latest tags are only updated if no newer x.y.z release has been
+          # published for the same variant, so (re)building an older release doesn't move these
+          # tags away from a newer release.
+          TAGS_FILE="$RUNNER_TEMP/published-tags.txt"
+          [[ -f "$TAGS_FILE" ]] || : > "$TAGS_FILE"
+          if [[ "${{ needs.generate-metadata.outputs.is_semantic }}" == "true" ]]; then
+            CURRENT="[${{ needs.generate-metadata.outputs.major }},${{ needs.generate-metadata.outputs.minor }},${{ needs.generate-metadata.outputs.patch }}]"
+          else
+            CURRENT="null"
+          fi
+          VARIANTS=$(echo "$VARIANTS" | jq -c --rawfile tags "$TAGS_FILE" --argjson current "$CURRENT" '
+            ($tags | split("\n") | map(select(length > 0))) as $all
+            | map(. as $variant
+              | (if $current == null then [] else
+                  [$all[] | select(endswith($variant.suffix))
+                    | .[0:(length - ($variant.suffix | length))]
+                    | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))
+                    | split(".") | map(tonumber)
+                    | select(. > $current)]
+                end) as $newer
+              | . + {
+                  "update_minor_alias": ([$newer[] | select(.[0:2] == $current[0:2])] | length == 0),
+                  "update_major_alias": ([$newer[] | select(.[0] == $current[0])] | length == 0),
+                  "update_latest_alias": ($newer | length == 0)
+                })')
+
           # Check if we have any variants to build
           VARIANT_COUNT=$(echo "$VARIANTS" | jq 'length')
           if [[ "$VARIANT_COUNT" -gt 0 ]]; then
@@ -370,12 +414,24 @@ jobs:
             # Tags: x.y.z-suffix-timestamp, x.y.z-suffix, x.y-suffix, x-suffix
             TAGS="${{ env.IMAGE_NAME }}:${VERSION}${SUFFIX}-${TIMESTAMP}"
             TAGS="${TAGS},${{ env.IMAGE_NAME }}:${VERSION}${SUFFIX}"
-            TAGS="${TAGS},${{ env.IMAGE_NAME }}:${MAJOR}.${MINOR}${SUFFIX}"
-            TAGS="${TAGS},${{ env.IMAGE_NAME }}:${MAJOR}${SUFFIX}"
+            if [[ "${{ matrix.variant.update_minor_alias }}" == "true" ]]; then
+              TAGS="${TAGS},${{ env.IMAGE_NAME }}:${MAJOR}.${MINOR}${SUFFIX}"
+            else
+              echo "::notice::Not updating ${MAJOR}.${MINOR}${SUFFIX}; a newer ${MAJOR}.${MINOR}.x${SUFFIX} image has been published"
+            fi
+            if [[ "${{ matrix.variant.update_major_alias }}" == "true" ]]; then
+              TAGS="${TAGS},${{ env.IMAGE_NAME }}:${MAJOR}${SUFFIX}"
+            else
+              echo "::notice::Not updating ${MAJOR}${SUFFIX}; a newer ${MAJOR}.x.x${SUFFIX} image has been published"
+            fi
             
             # Add 'latest' tag if explicitly requested (not for sc-client variants)
             if [[ "${{ inputs.isLatest }}" == "true" && -z "${{ matrix.variant.sc_client_version }}" ]]; then
-              TAGS="${TAGS},${{ env.IMAGE_NAME }}:latest${LATEST_SUFFIX}"
+              if [[ "${{ matrix.variant.update_latest_alias }}" == "true" ]]; then
+                TAGS="${TAGS},${{ env.IMAGE_NAME }}:latest${LATEST_SUFFIX}"
+              else
+                echo "::warning::Not updating latest${LATEST_SUFFIX}; a newer release has been published for this image variant"
+              fi
             fi
           else
             # Non-semantic version (including dev_*): only version tag, no timestamp
@@ -407,6 +463,9 @@ jobs:
           provenance: ${{ matrix.variant.publish }}
           sbom: ${{ matrix.variant.publish }}
           load: ${{ !matrix.variant.publish || !inputs.doPublish }}
+          pull: true
+          # Always reinstall sc-client to pick up the latest tool definitions and embedded JRE
+          no-cache-filters: ${{ matrix.variant.sc_client_version != '' && 'fcli-ubi9-sc' || '' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
       
@@ -431,6 +490,9 @@ jobs:
                test -x "$SC_CLIENT_HOME/bin/scancentral" && \
                echo "SC_CLIENT_HOME=$SC_CLIENT_HOME" && \
                echo "SC_CLIENT_CMD=$SC_CLIENT_CMD"'
+            docker run --rm "${TAG}" sh -c '"$SC_CLIENT_HOME/jre/bin/java" -version' 2>&1 | \
+              tee "$RUNNER_TEMP/sc-client-java-version.txt"
+            test "${PIPESTATUS[0]}" -eq 0
           else
             # Other variants: dynamically install sc-client via fcli and verify
             mkdir -p "${TEST_DIR}"
@@ -458,6 +520,12 @@ jobs:
           echo "- **Platform:** \`${{ matrix.variant.platform }}\`" >> $GITHUB_STEP_SUMMARY
           if [[ -n "${{ matrix.variant.sc_client_version }}" ]]; then
             echo "- **ScanCentral Client:** \`${{ matrix.variant.sc_client_version }}\` (pre-installed with embedded JRE)" >> $GITHUB_STEP_SUMMARY
+            if [[ -s "$RUNNER_TEMP/sc-client-java-version.txt" ]]; then
+              echo "- **Embedded JRE:**" >> $GITHUB_STEP_SUMMARY
+              echo '```' >> $GITHUB_STEP_SUMMARY
+              cat "$RUNNER_TEMP/sc-client-java-version.txt" >> $GITHUB_STEP_SUMMARY
+              echo '```' >> $GITHUB_STEP_SUMMARY
+            fi
           fi
           echo "- **Status:** ${PUBLISH_STATUS}" >> $GITHUB_STEP_SUMMARY
           

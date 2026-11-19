@@ -216,7 +216,7 @@ LABEL org.opencontainers.image.title="Fortify CLI (UBI9 + ScanCentral Client)" \
 USER root
 RUN test -n "$SC_CLIENT_VERSION" || \
       (echo "ERROR: SC_CLIENT_VERSION build argument is required for this target" && exit 1) && \
-    (fcli tool definitions update || echo "Warning: Could not update tool definitions; using bundled definitions") && \
+    fcli tool definitions update --force && \
     fcli tool sc-client install \
       --version "$SC_CLIENT_VERSION" \
       --install-dir /opt/fortify/sc-client \
@@ -226,6 +226,7 @@ ENV SC_CLIENT_HOME=/opt/fortify/sc-client
 ENV SC_CLIENT_CMD=/opt/fortify/sc-client/bin/scancentral
 ENV PATH="/opt/fortify/sc-client/bin:${PATH}"
 USER fcli
+RUN /opt/fortify/sc-client/jre/bin/java -version
 
 # ============================================================================
 # Stage: fcli-scratch
