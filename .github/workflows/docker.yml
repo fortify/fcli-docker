@@ -131,9 +131,10 @@ jobs:
         id: meta
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.releaseTag }}
         run: |
           # Extract version from tag (remove 'v' prefix if present)
-          VERSION="${{ inputs.releaseTag }}"
+          VERSION="${RELEASE_TAG}"
           VERSION="${VERSION#v}"
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           
@@ -141,7 +142,7 @@ jobs:
           # (authenticated to avoid rate limits on shared runner IP addresses)
           RELEASE_DATA=$(curl -fsSL -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${GH_TOKEN}" \
-            "https://api.github.com/repos/fortify/fcli/releases/tags/${{ inputs.releaseTag }}")
+            "https://api.github.com/repos/fortify/fcli/releases/tags/${RELEASE_TAG}")
           RELEASE_UPDATED_AT=$(echo "$RELEASE_DATA" | jq -r '.published_at // .created_at // ""')
           echo "release_updated_at=${RELEASE_UPDATED_AT}" >> $GITHUB_OUTPUT
           echo "Release updated at: ${RELEASE_UPDATED_AT}"
