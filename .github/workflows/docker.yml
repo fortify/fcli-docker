@@ -129,6 +129,8 @@ jobs:
     steps:
       - name: Extract metadata
         id: meta
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           # Extract version from tag (remove 'v' prefix if present)
           VERSION="${{ inputs.releaseTag }}"
@@ -136,7 +138,9 @@ jobs:
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           
           # Get release updated_at timestamp to bust Docker cache for rolling tags
+          # (authenticated to avoid rate limits on shared runner IP addresses)
           RELEASE_DATA=$(curl -fsSL -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
             "https://api.github.com/repos/fortify/fcli/releases/tags/${{ inputs.releaseTag }}")
           RELEASE_UPDATED_AT=$(echo "$RELEASE_DATA" | jq -r '.published_at // .created_at // ""')
           echo "release_updated_at=${RELEASE_UPDATED_AT}" >> $GITHUB_OUTPUT
